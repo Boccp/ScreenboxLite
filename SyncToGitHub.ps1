@@ -238,7 +238,7 @@ foreach ($item in $assetsToUpload) {
         Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$login/$repoName/releases/assets/$($existing.id)" @invokeParams | Out-Null
     }
     $uploadUri = "https://uploads.github.com/repos/$login/$repoName/releases/$releaseId/assets?name=$($item.Name)"
-    Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType $item.ContentType -InFile $item.Path @($(if ($proxy) { @{ Proxy = $proxy } } else { @{} })) | Out-Null
+    Invoke-RestMethod -Method Post -Uri $uploadUri -ContentType $item.ContentType -InFile $item.Path @invokeParams | Out-Null
     Write-Host "      -> 已上传 Release 附件: $($item.Name)" -ForegroundColor Green
 }
 
