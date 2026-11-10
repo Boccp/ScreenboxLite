@@ -59,10 +59,7 @@ $proxy = $null
 try {
     $tcp = New-Object System.Net.Sockets.TcpClient
     $ar = $tcp.BeginConnect("127.0.0.1", 7897, $null, $null)
-    if ($ar.AsyncWaitHandle.WaitOne(300, $false) -and $tcp.Connected) {
-        $null = Invoke-RestMethod -Method Head -Uri "https://api.github.com" -Proxy "http://127.0.0.1:7897" -Headers @{ "User-Agent" = "Probe" } -TimeoutSec 3 -ErrorAction Stop
-        $proxy = "http://127.0.0.1:7897"
-    }
+    if ($ar.AsyncWaitHandle.WaitOne(300, $false) -and $tcp.Connected) { $proxy = "http://127.0.0.1:7897" }
     $tcp.Close()
 } catch {}
 
