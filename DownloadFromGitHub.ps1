@@ -119,31 +119,46 @@ if ($token) { $headers["Authorization"] = "Bearer $token" }
 $invokeParams = @{ Headers = $headers }
 if ($proxy) { $invokeParams["Proxy"] = $proxy }
 
+function Invoke-GitHubApi([string]$Uri) {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            if ($attempt -eq 3 -and $invokeParams.ContainsKey("Proxy")) {
+                $noProxy = @{ Headers = $headers }
+                return Invoke-RestMethod -Method Get -Uri $Uri @noProxy -TimeoutSec 20
+            }
+            return Invoke-RestMethod -Method Get -Uri $Uri @invokeParams -TimeoutSec 20
+        } catch {
+            if ($attempt -eq 4) { throw }
+            Start-Sleep -Milliseconds (400 * $attempt)
+        }
+    }
+}
+
 Write-Host "[1/2] 正在检测本地版本与 GitHub ($login/$repoName) 远端版本 ..." -ForegroundColor Yellow
 
 $remoteVer = [version]"1.4.0.0"
 try {
-    $latestRel = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$login/$repoName/releases/latest" @invokeParams
+    $latestRel = Invoke-GitHubApi "https://api.github.com/repos/$login/$repoName/releases/latest"
     if ($latestRel -and $latestRel.tag_name) {
         $remoteVer = Parse-SemVer $latestRel.tag_name
     }
 } catch {}
 
-$commits = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$login/$repoName/commits?per_page=1" @invokeParams
+$commits = Invoke-GitHubApi "https://api.github.com/repos/$login/$repoName/commits?per_page=1"
 $headCommit = $commits[0]
 $remoteCommitSha = $headCommit.sha
 $remoteCommitShort = $remoteCommitSha.Substring(0, 7)
 $remoteCommitTimeUtc = [datetime]::Parse($headCommit.commit.committer.date).ToUniversalTime()
 $remoteCommitMsg = ($headCommit.commit.message -split "`n")[0].Trim()
 
-$tree = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$login/$repoName/git/trees/$remoteCommitSha`?recursive=1" @invokeParams
+$tree = Invoke-GitHubApi "https://api.github.com/repos/$login/$repoName/git/trees/$remoteCommitSha`?recursive=1"
 $remoteCsBlobSha = ""
 foreach ($item in $tree.tree) {
     if ($item.path -eq "ScreenboxLite.cs") {
         $remoteCsBlobSha = $item.sha
     }
     if ($item.path -eq "version.txt") {
-        $blob = Invoke-RestMethod -Method Get -Uri $item.url @invokeParams
+        $blob = Invoke-GitHubApi $item.url
         $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($blob.content))
         $v = Parse-SemVer $text
         if ($v -gt $remoteVer) { $remoteVer = $v }
@@ -209,7 +224,7 @@ Start-Sleep -Milliseconds 200
 foreach ($item in $tree.tree) {
     if ($item.type -eq "blob") {
         if ($item.path -eq "DownloadFromGitHub.ps1" -or $item.path -eq "SyncToGitHub.ps1") { continue }
-        $blob = Invoke-RestMethod -Method Get -Uri $item.url @invokeParams
+        $blob = Invoke-GitHubApi $item.url
         $bytes = [System.Convert]::FromBase64String($blob.content)
         $outPath = Join-Path $repoDir $item.path
         $outDir = Split-Path -Parent $outPath
