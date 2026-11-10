@@ -121,7 +121,7 @@ try {
 } catch {}
 
 $localCsSha = Get-GitBlobSha "$repoDir\ScreenboxLite.cs"
-$gitStatus = git status --porcelain 2>$null
+$gitStatus = git status --porcelain -- "ScreenboxLite.cs" "ScreenboxSetup.cs" "README.md" "version.txt" "SyncToGitHub.ps1" "DownloadFromGitHub.ps1" "说明书_Agent接手与构建指南.md" 2>$null
 
 if (-not $Force -and $remoteCommitSha) {
     if ($remoteVer -gt $localVer) {
