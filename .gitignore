@@ -1,4 +1,5 @@
-﻿.github_token
+﻿out/
+lib/libmpv-2.dll
+.github_token
 *.old.exe
 *.old
-

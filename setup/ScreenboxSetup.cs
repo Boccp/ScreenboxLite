@@ -49,7 +49,7 @@ namespace ScreenboxSetup
 
         public const string AppId = "ScreenboxLite";
         public const string AppDisplayName = "Screenbox (截图增强版)";
-        public const string AppVersion = "1.4.0";
+        public static readonly string AppVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
         public const string ProgId = "ScreenboxLite.Video";
 
         public static string GetDefaultInstallDir()
@@ -219,6 +219,9 @@ namespace ScreenboxSetup
                 }
             }
 
+            // 播放引擎 libmpv（压缩内嵌）。版本未变时跳过，覆盖更新只需一两秒
+            InstallLibmpv(asm, installDir);
+
             // Copy current setup executable as Uninstall.exe
             string selfExe = Process.GetCurrentProcess().MainModule.FileName;
             if (!string.Equals(Path.GetFullPath(selfExe), Path.GetFullPath(uninstallExe), StringComparison.OrdinalIgnoreCase))
@@ -368,12 +371,39 @@ namespace ScreenboxSetup
                     uninstKey.SetValue("UninstallString", "\"" + uninstallExe + "\" /uninstall");
                     uninstKey.SetValue("NoModify", 1, RegistryValueKind.DWord);
                     uninstKey.SetValue("NoRepair", 1, RegistryValueKind.DWord);
-                    uninstKey.SetValue("EstimatedSize", 120, RegistryValueKind.DWord);
+                    uninstKey.SetValue("EstimatedSize", 125000, RegistryValueKind.DWord);
                 }
             }
 
             RefreshShellAssociations();
             return targetExe;
+        }
+
+        private static void InstallLibmpv(Assembly asm, string installDir)
+        {
+            string dllPath = Path.Combine(installDir, "libmpv-2.dll");
+            string lockPath = Path.Combine(installDir, "libmpv.lock");
+            string embeddedLock;
+            using (Stream s = asm.GetManifestResourceStream("libmpv.lock"))
+            {
+                if (s == null) throw new InvalidOperationException("安装包缺少 libmpv.lock 资源");
+                using (var r = new StreamReader(s)) embeddedLock = r.ReadToEnd();
+            }
+            if (File.Exists(dllPath) && File.Exists(lockPath) && File.ReadAllText(lockPath) == embeddedLock) return;
+
+            string tmp = dllPath + ".tmp";
+            using (Stream gz = asm.GetManifestResourceStream("libmpv-2.dll.gz"))
+            {
+                if (gz == null) throw new InvalidOperationException("安装包缺少 libmpv-2.dll.gz 资源");
+                using (var z = new System.IO.Compression.GZipStream(gz, System.IO.Compression.CompressionMode.Decompress))
+                using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    z.CopyTo(fs);
+                }
+            }
+            if (File.Exists(dllPath)) File.Delete(dllPath);
+            File.Move(tmp, dllPath);
+            File.WriteAllText(lockPath, embeddedLock);
         }
 
         public static void RunUninstaller(bool silent)
