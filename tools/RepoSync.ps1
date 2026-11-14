@@ -93,8 +93,15 @@ if ($Only -ne 'All') { $Repos = @($Repos | Where-Object { $_.Name -eq $Only }) }
 function Write-Step([string]$text, [string]$color = 'Cyan') { Write-Host $text -ForegroundColor $color }
 
 function Invoke-Git([string]$dir, [string[]]$gitArgs, [switch]$Quiet) {
-    $out = & git -C $dir @gitArgs 2>&1
-    if ($LASTEXITCODE -ne 0) { throw ("git {0} 失败:`n{1}" -f ($gitArgs -join ' '), ($out | Out-String)) }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & git -C $dir @gitArgs 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($code -ne 0) { throw ("git {0} 失败 (exit {1}):`n{2}" -f ($gitArgs -join ' '), $code, ($out | Out-String)) }
     if (-not $Quiet) { return ($out | Out-String).Trim() }
 }
 
@@ -188,10 +195,17 @@ function Invoke-Push($r) {
 function Publish-Release($r) {
     $d = $r.Dir
     $tag = 'v' + (Get-Version $d)
-    $remoteTag = & git -C $d ls-remote --tags origin "refs/tags/$tag" 2>$null
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $remoteTag = & git -C $d ls-remote --tags origin "refs/tags/$tag" 2>$null
+        $localTag = & git -C $d tag -l $tag 2>$null
+        $notes = (& git -C $d log --pretty='- %s' -10 2>$null | Out-String)
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     if ($remoteTag) { Write-Step "  $tag 已发布过（改动只进入代码仓库；要发新版请先修改 version.txt）" 'DarkGray'; return }
 
-    $localTag = & git -C $d tag -l $tag 2>$null
     if ($localTag) { Invoke-Git $d @('tag', '-d', $tag) -Quiet }
     Invoke-Git $d @('tag', $tag) -Quiet
     Invoke-Git $d @('push', 'origin', $tag) -Quiet
@@ -200,7 +214,6 @@ function Publish-Release($r) {
     if (-not $token) { Write-Step "  已推送 tag $tag；未取得 GitHub 凭证，请在网页上为该 tag 创建 Release 并上传 $($r.Assets -join ', ')" 'Yellow'; return }
 
     $h = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'RepoSync' }
-    $notes = (& git -C $d log --pretty='- %s' -10 | Out-String)
     $body = @{ tag_name = $tag; name = "$($r.Name) $tag"; body = $notes } | ConvertTo-Json
     $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases" -Headers $h -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json' -TimeoutSec 60
     foreach ($a in $r.Assets) {
@@ -216,14 +229,20 @@ function Publish-Release($r) {
 # 复用本机 Git 凭据管理器或 gh CLI 中保存的 GitHub 登录（不在磁盘上另存 token）
 function Get-GitHubToken {
     if ($env:GITHUB_TOKEN) { return $env:GITHUB_TOKEN }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        $out = "protocol=https`nhost=github.com`n`n" | & git credential fill 2>$null
-        foreach ($l in $out) { if ($l -match '^password=(.+)$') { return $matches[1] } }
-    } catch {}
-    try {
-        $gh = (& gh auth token 2>$null)
-        if ($gh -and $gh.Trim()) { return $gh.Trim() }
-    } catch {}
+        try {
+            $out = "protocol=https`nhost=github.com`n`n" | & git credential fill 2>$null
+            foreach ($l in $out) { if ($l -match '^password=(.+)$') { return $matches[1] } }
+        } catch {}
+        try {
+            $gh = (& gh auth token 2>$null)
+            if ($gh -and $gh.Trim()) { return $gh.Trim() }
+        } catch {}
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     return $null
 }
 
