@@ -33,12 +33,20 @@ namespace ScreenboxLite
 
             if (args.Length > 0 && args[0] == "--self-test")
             {
+                EnsureLibmpv(true);
                 int code = SelfTest.Run();
                 Log.Flush();
                 return code;
             }
+            if (args.Length >= 2 && args[0] == "--self-test-ui")
+            {
+                if (!EnsureLibmpv(true)) return 2;
+                int code = SelfTest.RunWithVideo(args[1]);
+                Log.Flush();
+                return code;
+            }
 
-            if (!EnsureLibmpv()) return 2;
+            if (!EnsureLibmpv(false)) return 2;
             PreferHighPerformanceGpu();
             string stepMode = Environment.GetEnvironmentVariable("SCREENBOX_STEP_MODE");
             Mpv.MpvPlayer.StepMode sm;
@@ -73,7 +81,7 @@ namespace ScreenboxLite
         }
 
         /// <summary>libmpv-2.dll 放在 exe 同目录（或 lib\ 子目录）。缺失时给出明确提示。</summary>
-        private static bool EnsureLibmpv()
+        internal static bool EnsureLibmpv(bool silent)
         {
             string dir = AppDomain.CurrentDomain.BaseDirectory;
             if (File.Exists(Path.Combine(dir, "libmpv-2.dll"))) return true;
@@ -83,8 +91,11 @@ namespace ScreenboxLite
                 SetDllDirectory(lib);
                 return true;
             }
-            MessageBox.Show("缺少播放引擎 libmpv-2.dll。\n请重新运行安装包 ScreenboxSetup.exe 修复安装。\n\n查找位置：" + dir,
-                "Screenbox", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (!silent)
+            {
+                MessageBox.Show("缺少播放引擎 libmpv-2.dll。\n请重新运行安装包 ScreenboxSetup.exe 修复安装。\n\n查找位置：" + dir,
+                    "Screenbox", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
             return false;
         }
 

@@ -42,7 +42,7 @@ namespace ScreenboxLite.Ui
             _player.PauseChanged += () => _playIcon.Text = _player.Paused ? "▶" : "⏸";
             _player.VideoChanged += () => { UpdateTimeUi(true); UpdateVideoVisibility(); };
             _player.FileLoaded += OnFileLoaded;
-            _player.VideoReconfig += () => { _videoHost.DisableChildInput(); UpdateVideoVisibility(); };
+            _player.VideoReconfig += () => { _videoHost.DisableChildInput(); UpdateVideoVisibility(); if (!IsTypingInJumpBox()) FocusMain(); };
             _player.EndFile += reason =>
             {
                 if (reason == 4) ShowToast("无法播放该文件（格式损坏或不受支持）");
@@ -95,13 +95,21 @@ namespace ScreenboxLite.Ui
 
         private void OpenFilePicker()
         {
-            using (var dlg = new System.Windows.Forms.OpenFileDialog())
+            _inModalDialog = true;
+            try
             {
-                dlg.Title = "选择要打开的视频文件";
-                dlg.Filter = Playlist.OpenDialogFilter;
-                if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK) LoadVideo(dlg.FileName);
+                using (var dlg = new System.Windows.Forms.OpenFileDialog())
+                {
+                    dlg.Title = "选择要打开的视频文件";
+                    dlg.Filter = Playlist.OpenDialogFilter;
+                    if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK) LoadVideo(dlg.FileName);
+                }
             }
-            FocusMain();
+            finally
+            {
+                _inModalDialog = false;
+                FocusMain();
+            }
         }
 
         public void LoadVideo(string path)
@@ -171,6 +179,7 @@ namespace ScreenboxLite.Ui
             _videoHost.DisableChildInput();
             UpdateVideoVisibility();
             UpdateTimeUi(true);
+            if (!IsTypingInJumpBox()) FocusMain();
         }
 
         private void UpdateVideoVisibility()
@@ -211,6 +220,7 @@ namespace ScreenboxLite.Ui
                 if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal; // 先还原才能盖住任务栏
                 WindowState = WindowState.Maximized;
             }
+            FocusMain();
         }
 
         private bool JumpToInput(bool thenCapture)

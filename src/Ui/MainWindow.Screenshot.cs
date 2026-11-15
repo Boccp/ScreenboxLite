@@ -98,6 +98,7 @@ namespace ScreenboxLite.Ui
             _frozenImage.Source = null;
             _magnifierBrush.ImageSource = null;
             _frozen = null;
+            FocusMain();
         }
 
         private void SetFrozen(BitmapSource frame)

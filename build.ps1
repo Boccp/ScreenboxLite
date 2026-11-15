@@ -28,7 +28,7 @@ $refs = @(
     "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll"
 )
 $common = @('/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/warn:4', '/codepage:65001',
-            "/win32icon:$root\ScreenboxLite.ico")
+            "/win32icon:$root\ScreenboxLite.ico", "/win32manifest:$root\src\app.manifest")
 
 function Invoke-Csc([string[]]$arguments, [string]$what) {
     $sw = [Diagnostics.Stopwatch]::StartNew()

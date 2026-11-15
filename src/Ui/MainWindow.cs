@@ -104,6 +104,9 @@ namespace ScreenboxLite.Ui
             UseLayoutRounding = true;
             SnapsToDevicePixels = true;
             TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+            KeyboardNavigation.SetTabNavigation(this, KeyboardNavigationMode.None);
+            KeyboardNavigation.SetDirectionalNavigation(this, KeyboardNavigationMode.None);
+            KeyboardNavigation.SetControlTabNavigation(this, KeyboardNavigationMode.None);
             LoadWindowIcon();
 
             var root = new Grid();
@@ -421,6 +424,8 @@ namespace ScreenboxLite.Ui
                 Width = 92,
                 Height = 28,
                 Text = "00:00:05",
+                Focusable = false,
+                IsTabStop = false,
                 Background = Theme.Frozen(Color.FromRgb(34, 34, 34)),
                 Foreground = Brushes.White,
                 BorderBrush = Theme.ButtonBorder,
@@ -429,7 +434,11 @@ namespace ScreenboxLite.Ui
                 Padding = new Thickness(6, 0, 6, 0),
                 ToolTip = "输入秒数(如 85.5)或时间(如 01:25 或 00:01:25.500)，按回车直接跳转"
             };
-            InputMethod.SetIsInputMethodEnabled(_jumpBox, true);
+            InputMethod.SetIsInputMethodEnabled(_jumpBox, false);
+            _jumpBox.PreviewMouseDown += (s, e) =>
+            {
+                if (!_jumpBox.Focusable) _jumpBox.Focusable = true;
+            };
             _jumpBox.KeyDown += (s, e) =>
             {
                 if (e.Key == Key.Enter) { JumpToInput(false); e.Handled = true; }
@@ -446,7 +455,7 @@ namespace ScreenboxLite.Ui
             var speedLabel = Theme.Label("倍速:", Theme.TextDim, 12);
             speedLabel.Margin = new Thickness(0, 0, 4, 0);
             right.Children.Add(speedLabel);
-            _speedCombo = new ComboBox { Width = 68, Height = 28, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0), Focusable = false };
+            _speedCombo = new ComboBox { Width = 68, Height = 28, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0), Focusable = false, IsTabStop = false };
             foreach (double sp in Speeds) _speedCombo.Items.Add(sp.ToString("0.##") + "x");
             _speedCombo.SelectedIndex = 3;
             _speedCombo.SelectionChanged += (s, e) =>
@@ -454,6 +463,7 @@ namespace ScreenboxLite.Ui
                 if (_speedCombo.SelectedIndex >= 0) _player.SetSpeed(Speeds[_speedCombo.SelectedIndex]);
                 FocusMain();
             };
+            _speedCombo.DropDownClosed += (s, e) => FocusMain();
             right.Children.Add(_speedCombo);
 
             _volumeLockBtn = Theme.MakeButton("🔒 锁0", 62, 28);
@@ -574,12 +584,6 @@ namespace ScreenboxLite.Ui
             _toastTimer.Start();
         }
 
-        private void FocusMain()
-        {
-            Focus();
-            Keyboard.Focus(this);
-        }
-
         private static string FormatTime(double seconds)
         {
             if (seconds < 0 || double.IsNaN(seconds)) seconds = 0;
@@ -594,18 +598,26 @@ namespace ScreenboxLite.Ui
 
         private void PickSaveFolder()
         {
-            using (var dlg = new System.Windows.Forms.FolderBrowserDialog())
+            _inModalDialog = true;
+            try
             {
-                dlg.Description = "选择截图默认保存目录";
-                dlg.SelectedPath = _settings.SaveFolderPath;
-                if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
+                using (var dlg = new System.Windows.Forms.FolderBrowserDialog())
                 {
-                    _settings.SaveFolderPath = dlg.SelectedPath;
-                    _saveLocationText.Text = dlg.SelectedPath;
-                    _settings.Save();
+                    dlg.Description = "选择截图默认保存目录";
+                    dlg.SelectedPath = _settings.SaveFolderPath;
+                    if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
+                    {
+                        _settings.SaveFolderPath = dlg.SelectedPath;
+                        _saveLocationText.Text = dlg.SelectedPath;
+                        _settings.Save();
+                    }
                 }
             }
-            FocusMain();
+            finally
+            {
+                _inModalDialog = false;
+                FocusMain();
+            }
         }
 
         private void OpenSaveFolder()

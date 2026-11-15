@@ -91,20 +91,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\RepoSync.ps1 push -O
 无需安装 Visual Studio，仅使用 Windows 自带 `.NET Framework 4.x` 的 `csc.exe`（C# 5）：
 
 ```powershell
-# 1. 快速编译主程序并执行无界面自动化自检（约 0.3s）
+# 1. 快速编译主程序并执行无界面 + 真窗焦点/输入法快捷键自检（约 1s）
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -NoSetup -Test
 
-# 2. 完整编译主程序 + ScreenboxSetup.exe 单文件安装包 + 自检（约 0.8s）
+# 2. 完整编译主程序 + ScreenboxSetup.exe 单文件安装包 + 自检
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test
 
-# 3. 运行自动化性能基准测试（测试打开、逐帧、跳转与无损抓帧延迟）
+# 3. 结合真实视频端到端自检（验证 d3d11 硬解、点击穿透、中文输入法全快捷键）
+.\out\ScreenboxLite.exe --self-test-ui "D:\test.mp4"
+
+# 4. 运行自动化性能基准测试（测试打开、逐帧、跳转与无损抓帧延迟）
 .\out\ScreenboxLite.exe --bench "D:\test.mp4" ".\bench_report.txt"
 ```
 
 ```text
 ScreenboxLite/
 ├── build.ps1                  # 一键构建主程序 + 自包含安装包（含 -Test 自检）
-├── version.txt                # 当前语义化版本号 (2.0.0)
+├── version.txt                # 当前语义化版本号 (2.0.1)
 ├── tools/
 │   ├── fetch-libmpv.ps1       # 自动下载并按 SHA256 校验锁定 libmpv-2.dll
 │   └── RepoSync.ps1           # 统一 Git 同步、Release 发布与本机部署工具
