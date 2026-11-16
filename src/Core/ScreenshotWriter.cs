@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace ScreenboxLite.Core
@@ -10,6 +11,36 @@ namespace ScreenboxLite.Core
     internal static class ScreenshotWriter
     {
         private static readonly object NameLock = new object();
+
+        /// <summary>水平镜像翻转位图（无损逐行像素镜像，返回冻结的 Bgr32 位图）。</summary>
+        public static BitmapSource FlipHorizontal(BitmapSource src)
+        {
+            if (src == null) return null;
+            BitmapSource bgr = src.Format == PixelFormats.Bgr32
+                ? src
+                : new FormatConvertedBitmap(src, PixelFormats.Bgr32, null, 0);
+            int w = bgr.PixelWidth, h = bgr.PixelHeight;
+            if (w <= 0 || h <= 0) return src;
+            int stride = w * 4;
+            int[] pixels = new int[w * h];
+            bgr.CopyPixels(pixels, stride, 0);
+            for (int y = 0; y < h; y++)
+            {
+                int row = y * w;
+                int l = row, r = row + w - 1;
+                while (l < r)
+                {
+                    int tmp = pixels[l];
+                    pixels[l] = pixels[r];
+                    pixels[r] = tmp;
+                    l++;
+                    r--;
+                }
+            }
+            var flipped = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgr32, null, pixels, stride);
+            flipped.Freeze();
+            return flipped;
+        }
 
         /// <summary>按归一化矩形裁剪（null 表示整帧）。返回冻结的位图。</summary>
         public static BitmapSource Crop(BitmapSource frame, Rect? normalized)

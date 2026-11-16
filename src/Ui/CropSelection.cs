@@ -229,6 +229,24 @@ namespace ScreenboxLite.Ui
             _start = map(_start);
         }
 
+        /// <summary>画面水平翻转时，同步水平镜像当前裁剪框与蓝图起点，使选框保持锁定同一画面主体。</summary>
+        public void MirrorHorizontal(Rect bounds)
+        {
+            if (bounds.Width <= 0) return;
+            Func<double, double> mx = x => bounds.Left + bounds.Right - x;
+            if (!Current.IsEmpty && Current.Width > 0)
+            {
+                double nl = mx(Current.Right);
+                Current = ClampRect(new Rect(nl, Current.Top, Current.Width, Current.Height), bounds);
+            }
+            _start = new Point(mx(_start.X), _start.Y);
+            if (!_resizeStartRect.IsEmpty && _resizeStartRect.Width > 0)
+            {
+                double rnl = mx(_resizeStartRect.Right);
+                _resizeStartRect = ClampRect(new Rect(rnl, _resizeStartRect.Top, _resizeStartRect.Width, _resizeStartRect.Height), bounds);
+            }
+        }
+
         public CropHitZone HitTest(Point pt)
         {
             if (!HasSelection || Current.Width < MinSize || Current.Height < MinSize) return CropHitZone.None;

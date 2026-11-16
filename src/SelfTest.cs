@@ -331,6 +331,16 @@ namespace ScreenboxLite
                         "窗外防误点护盾返回 MA_NOACTIVATE 不夺取主窗口焦点");
                     Check(WindowFromPoint(ptScreen) == mainHwnd, "截图模式下主窗口内部点击仍直达主窗口（未被护盾遮挡）");
 
+                    // Tab 键 (ScanTab 0x0F) 水平翻转切换与还原
+                    Check(!win.IsShotFlipped, "进入截图模式默认未翻转");
+                    SendImeKey(mainHwnd, 0x0F);
+                    Pump(80);
+                    Check(win.IsShotFlipped, "截图模式按 Tab 开启水平翻转成功");
+                    Check(GetFocus() == mainHwnd, "按 Tab 水平翻转后 Win32 焦点未跑偏");
+                    SendImeKey(mainHwnd, 0x0F);
+                    Pump(80);
+                    Check(!win.IsShotFlipped, "截图模式再次按 Tab 还原原始方向成功");
+
                     var ptOutside = new POINT { X = Math.Max(2, ptScreen.X - 600), Y = ptScreen.Y };
                     RECT mainWinRect;
                     if (GetWindowRect(mainHwnd, out mainWinRect) && mainWinRect.Left > 20)
@@ -412,6 +422,23 @@ namespace ScreenboxLite
             c.MouseMove(new Point(302, 260), true, b);
             c.MouseUp(new Point(302, 260), b);
             Check(!c.HasSelection, "过窄的框不落地");
+
+            // 水平镜像选框与位图翻转验证
+            c.Reset();
+            c.MouseDown(new Point(150, 100), b);
+            c.MouseMove(new Point(350, 250), true, b);
+            c.MouseUp(new Point(350, 250), b);
+            c.MirrorHorizontal(b); // b = [100..900], [150..350] 镜像后应为 [650..850]
+            Check(Near(c.Current, new Rect(650, 100, 200, 150)), "选框水平镜像坐标精确");
+            c.MirrorHorizontal(b);
+            Check(Near(c.Current, new Rect(150, 100, 200, 150)), "选框二次镜像往返还原");
+
+            int[] testPx = new int[] { 0x112233, 0x445566, 0x778899 };
+            var srcBmp = BitmapSource.Create(3, 1, 96, 96, System.Windows.Media.PixelFormats.Bgr32, null, testPx, 12);
+            var flipBmp = ScreenshotWriter.FlipHorizontal(srcBmp);
+            int[] outPx = new int[3];
+            flipBmp.CopyPixels(outPx, 12, 0);
+            Check(outPx[0] == 0x778899 && outPx[1] == 0x445566 && outPx[2] == 0x112233, "位图水平镜像像素精确");
         }
 
         private static bool Near(Rect a, Rect b)

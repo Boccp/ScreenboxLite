@@ -220,7 +220,7 @@ namespace ScreenboxLite.Ui
             saveBox.Child = _saveLocationText;
             Grid.SetColumn(saveBox, 1);
             inner.Children.Add(saveBox);
-            var tip = Theme.Label("[~截图模式] 拖拽/双点定框 | [R]恢复上次框 | [~]保存 | 滚轮:帧(Ctrl:1s) | A/D:5x快退进(S+A/D:帧) | 1/2/3(E倒):5s/20s/1m",
+            var tip = Theme.Label("[~截图模式] 拖拽/双点定框 | [Tab]水平翻转 | [R]恢复上次框 | [~]保存 | 滚轮:帧(Ctrl:1s) | A/D:5x快退进 | 1/2/3(E倒):5s/20s/1m",
                 Theme.Frozen(Color.FromRgb(190, 225, 240)), 11.5);
             tip.TextTrimming = TextTrimming.CharacterEllipsis;
             tip.Margin = new Thickness(4, 0, 12, 0);

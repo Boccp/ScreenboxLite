@@ -32,7 +32,7 @@ namespace ScreenboxLite.Ui
         private IntPtr _mainHwnd;
         private bool _inModalDialog;
         private bool _keyA, _keyD, _keyS, _keyE, _tildeDown;
-        private long _lastTildeTick, _lastRTick;
+        private long _lastTildeTick, _lastRTick, _lastTabTick;
         private bool _stageClickArmed;
         private POINT _stageDownPt;
         private long _lastStageClickUpTick;
@@ -236,6 +236,7 @@ namespace ScreenboxLite.Ui
         private const int Scan1 = 0x02;
         private const int Scan2 = 0x03;
         private const int Scan3 = 0x04;
+        private const int ScanTab = 0x0F;
         private const int ScanE = 0x12;
         private const int ScanR = 0x13;
         private const int ScanO = 0x18;
@@ -254,6 +255,7 @@ namespace ScreenboxLite.Ui
         private const int ScanF11 = 0x57;
 
         // Win32 虚拟键码
+        private const int VK_TAB = 0x09;
         private const int VK_RETURN = 0x0D;
         private const int VK_SHIFT = 0x10;
         private const int VK_CONTROL = 0x11;
@@ -433,6 +435,7 @@ namespace ScreenboxLite.Ui
             bool isS = (!extended && scan == ScanS) || vk == 'S';
             bool isE = (!extended && scan == ScanE) || vk == 'E';
             bool isR = (!extended && scan == ScanR) || vk == 'R';
+            bool isTab = (!extended && scan == ScanTab) || vk == VK_TAB;
             bool is1 = (!extended && scan == Scan1) || vk == '1' || vk == VK_NUMPAD1;
             bool is2 = (!extended && scan == Scan2) || vk == '2' || vk == VK_NUMPAD2;
             bool is3 = (!extended && scan == Scan3) || vk == '3' || vk == VK_NUMPAD3;
@@ -524,6 +527,13 @@ namespace ScreenboxLite.Ui
                 if (!_shotActive) return false;
                 if (!repeat && Debounce(ref _lastRTick, 120)) RestoreLastCrop();
                 MarkRawHandled('R');
+                return true;
+            }
+            if (isTab)
+            {
+                if (!_shotActive) return false;
+                if (!repeat && Debounce(ref _lastTabTick, 60)) ToggleShotHorizontalFlip();
+                MarkRawHandled(VK_TAB);
                 return true;
             }
 

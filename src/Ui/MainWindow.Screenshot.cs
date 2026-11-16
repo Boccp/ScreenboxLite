@@ -22,13 +22,18 @@ namespace ScreenboxLite.Ui
     internal sealed partial class MainWindow
     {
         private bool _shotActive;
+        private bool _shotFlipped;
         private readonly CropSelection _crop = new CropSelection();
+        private BitmapSource _rawFrozen;
+        private BitmapSource _flippedFrozen;
         private BitmapSource _frozen;
         private int _grabGeneration;
         private bool _grabInFlight;
         private bool _saveWhenReady;
         private string _lastSavedPath;
         private Rect _lastBounds = Rect.Empty;
+
+        internal bool IsShotFlipped { get { return _shotFlipped; } }
 
         private void HandleTilde()
         {
@@ -64,7 +69,8 @@ namespace ScreenboxLite.Ui
                 ShowToast("截取画面失败，请稍后重试");
                 return;
             }
-            SetFrozen(frame);
+            _shotFlipped = false;
+            SetRawFrozen(frame);
 
             _shotActive = true;
             _saveWhenReady = false;
@@ -88,6 +94,7 @@ namespace ScreenboxLite.Ui
         {
             if (_overlayRoot.IsMouseCaptured) _overlayRoot.ReleaseMouseCapture();
             _shotActive = false;
+            _shotFlipped = false;
             _saveWhenReady = false;
             HideShotShield();
             _crop.Reset();
@@ -99,15 +106,50 @@ namespace ScreenboxLite.Ui
             _frozenImage.Visibility = Visibility.Collapsed;
             _frozenImage.Source = null;
             _magnifierBrush.ImageSource = null;
+            _rawFrozen = null;
+            _flippedFrozen = null;
             _frozen = null;
             FocusMain();
         }
 
-        private void SetFrozen(BitmapSource frame)
+        private void SetRawFrozen(BitmapSource rawFrame)
         {
-            _frozen = frame;
-            _frozenImage.Source = frame;
-            _magnifierBrush.ImageSource = frame;
+            _rawFrozen = rawFrame;
+            _flippedFrozen = null;
+            ApplyFrozenView();
+        }
+
+        private void ApplyFrozenView()
+        {
+            if (_rawFrozen == null)
+            {
+                _frozen = null;
+                _frozenImage.Source = null;
+                _magnifierBrush.ImageSource = null;
+                return;
+            }
+            if (_shotFlipped)
+            {
+                if (_flippedFrozen == null) _flippedFrozen = ScreenshotWriter.FlipHorizontal(_rawFrozen);
+                _frozen = _flippedFrozen;
+            }
+            else
+            {
+                _frozen = _rawFrozen;
+            }
+            _frozenImage.Source = _frozen;
+            _magnifierBrush.ImageSource = _frozen;
+        }
+
+        internal void ToggleShotHorizontalFlip()
+        {
+            if (!_shotActive || _rawFrozen == null) return;
+            _shotFlipped = !_shotFlipped;
+            ApplyFrozenView();
+            _crop.MirrorHorizontal(VideoRect());
+            RenderSelection();
+            UpdateAim(Mouse.GetPosition(_overlayRoot));
+            ShowToast(_shotFlipped ? "↔ 已水平翻转画面（保存截图同步翻转，再按 Tab 还原）" : "↔ 已还原原始画面方向");
         }
 
         /// <summary>模式内帧落定后，后台重新取帧（不阻塞 UI），完成后替换冻结帧。</summary>
@@ -127,7 +169,7 @@ namespace ScreenboxLite.Ui
                     if (t.Exception == null && t.Result != null)
                     {
                         Rect before = VideoRect();
-                        SetFrozen(t.Result);
+                        SetRawFrozen(t.Result);
                         Rect after = VideoRect();
                         if (before != after) _crop.Rescale(before, after);
                         RenderSelection();

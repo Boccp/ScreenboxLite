@@ -78,7 +78,14 @@ $Repos = @(
             $appDir = Join-Path $env:LOCALAPPDATA 'Programs\DshGalleryExplorer'
             foreach ($t in @($toolsDir, $appDir)) {
                 New-Item -ItemType Directory -Force $t | Out-Null
-                Copy-Item -Force $exe (Join-Path $t 'dsh-gallery-explorer.exe')
+                $dstExe = Join-Path $t 'dsh-gallery-explorer.exe'
+                try { Copy-Item -Force $exe $dstExe -ErrorAction Stop }
+                catch {
+                    $oldExe = "$dstExe.old"
+                    Remove-Item -LiteralPath $oldExe -Force -ErrorAction SilentlyContinue
+                    Move-Item -LiteralPath $dstExe -Destination $oldExe -Force
+                    Copy-Item -Force $exe $dstExe
+                }
             }
             $desktop = [Environment]::GetFolderPath('Desktop')
             $lnk1 = Join-Path $desktop 'DSH 画师图库管理器.lnk'
@@ -99,12 +106,41 @@ if ($Only -ne 'All') { $Repos = @($Repos | Where-Object { $_.Name -eq $Only }) }
 
 function Write-Step([string]$text, [string]$color = 'Cyan') { Write-Host $text -ForegroundColor $color }
 
+function Resolve-LocalProxy {
+    try {
+        $ie = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+        if ($ie -and $ie.ProxyEnable -eq 1 -and $ie.ProxyServer) {
+            $srv = ($ie.ProxyServer -split ';')[0].Trim()
+            if ($srv -notmatch '^https?://') { $srv = "http://$srv" }
+            return $srv
+        }
+    } catch {}
+    foreach ($port in @(7897, 7890)) {
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $ar = $tcp.BeginConnect('127.0.0.1', $port, $null, $null)
+            $ok = $ar.AsyncWaitHandle.WaitOne(200, $false) -and $tcp.Connected
+            $tcp.Close()
+            if ($ok) { return "http://127.0.0.1:$port" }
+        } catch {}
+    }
+    return $null
+}
+$Script:ActiveProxy = Resolve-LocalProxy
+
 function Invoke-Git([string]$dir, [string[]]$gitArgs, [switch]$Quiet) {
+    $isNet = $gitArgs.Count -gt 0 -and $gitArgs[0] -in @('fetch', 'push', 'pull', 'ls-remote')
+    $fullArgs = if ($isNet -and $Script:ActiveProxy) { @('-c', "http.https://github.com.proxy=$($Script:ActiveProxy)") + $gitArgs } else { $gitArgs }
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $out = & git -C $dir @gitArgs 2>&1
+        $out = & git -C $dir @fullArgs 2>&1
         $code = $LASTEXITCODE
+        if ($code -ne 0 -and $isNet) {
+            Start-Sleep -Seconds 1
+            $out = & git -C $dir @fullArgs 2>&1
+            $code = $LASTEXITCODE
+        }
     } finally {
         $ErrorActionPreference = $prevEap
     }
@@ -205,7 +241,7 @@ function Publish-Release($r) {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $remoteTag = & git -C $d ls-remote --tags origin "refs/tags/$tag" 2>$null
+        $remoteTag = Invoke-Git $d @('ls-remote', '--tags', 'origin', "refs/tags/$tag")
         $localTag = & git -C $d tag -l $tag 2>$null
         $notes = (& git -C $d log --pretty='- %s' -10 2>$null | Out-String)
     } finally {
@@ -217,30 +253,39 @@ function Publish-Release($r) {
     Invoke-Git $d @('tag', $tag) -Quiet
     Invoke-Git $d @('push', 'origin', $tag) -Quiet
 
-    $token = Get-GitHubToken
+    $token = Get-GitHubToken $d
     if (-not $token) { Write-Step "  已推送 tag $tag；未取得 GitHub 凭证，请在网页上为该 tag 创建 Release 并上传 $($r.Assets -join ', ')" 'Yellow'; return }
 
     $h = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'RepoSync' }
+    $restOpts = @{ Headers = $h }
+    if ($Script:ActiveProxy) { $restOpts['Proxy'] = $Script:ActiveProxy }
     $body = @{ tag_name = $tag; name = "$($r.Name) $tag"; body = $notes } | ConvertTo-Json
-    $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases" -Headers $h -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json' -TimeoutSec 60
+    $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases" @restOpts -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json' -TimeoutSec 60
     foreach ($a in $r.Assets) {
         $file = Join-Path $d $a
         $name = [IO.Path]::GetFileName($file)
         $url = ($rel.upload_url -replace '\{.*\}', '') + "?name=$name"
         Write-Step "  正在上传 Release 附件 $name ($([math]::Round((Get-Item $file).Length/1MB, 2)) MB) ..."
-        Invoke-RestMethod -Method Post -Uri $url -Headers $h -InFile $file -ContentType 'application/octet-stream' -TimeoutSec 600 | Out-Null
+        Invoke-RestMethod -Method Post -Uri $url @restOpts -InFile $file -ContentType 'application/octet-stream' -TimeoutSec 600 | Out-Null
         Write-Step "  已上传 Release 附件 $name" 'Green'
     }
 }
 
-# 复用本机 Git 凭据管理器或 gh CLI 中保存的 GitHub 登录（不在磁盘上另存 token）
-function Get-GitHubToken {
+# 复用本机 .github_token、Git 凭据管理器或 gh CLI 中保存的 GitHub 登录
+function Get-GitHubToken([string]$repoDir) {
     if ($env:GITHUB_TOKEN) { return $env:GITHUB_TOKEN }
+    if ($repoDir) {
+        $tf = Join-Path $repoDir '.github_token'
+        if (Test-Path $tf) {
+            $t = (Get-Content $tf -Raw -Encoding UTF8).Trim()
+            if ($t) { return $t }
+        }
+    }
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         try {
-            $out = "protocol=https`nhost=github.com`n`n" | & git credential fill 2>$null
+            $out = "protocol=https`nhost=github.com`nusername=$Owner`n`n" | & git credential fill 2>$null
             foreach ($l in $out) { if ($l -match '^password=(.+)$') { return $matches[1] } }
         } catch {}
         try {
