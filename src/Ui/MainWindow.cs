@@ -90,6 +90,7 @@ namespace ScreenboxLite.Ui
         public MainWindow(string startupFile)
         {
             _startupFile = startupFile;
+            Playlist.InitStartupContext(startupFile);
             _settings = Settings.Load();
 
             Title = "Screenbox (画框外UI + ~键原生截图 + 时间轴缩略图版)";
@@ -599,6 +600,7 @@ namespace ScreenboxLite.Ui
         private void PickSaveFolder()
         {
             _inModalDialog = true;
+            UpdateShotShield();
             try
             {
                 using (var dlg = new System.Windows.Forms.FolderBrowserDialog())
@@ -617,6 +619,7 @@ namespace ScreenboxLite.Ui
             {
                 _inModalDialog = false;
                 FocusMain();
+                UpdateShotShield();
             }
         }
 
@@ -624,6 +627,7 @@ namespace ScreenboxLite.Ui
         {
             try
             {
+                HideShotShield();
                 Directory.CreateDirectory(_settings.SaveFolderPath);
                 Process.Start("explorer.exe", "\"" + _settings.SaveFolderPath + "\"");
             }

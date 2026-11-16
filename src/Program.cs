@@ -80,9 +80,15 @@ namespace ScreenboxLite
             return 0;
         }
 
-        /// <summary>libmpv-2.dll 放在 exe 同目录（或 lib\ 子目录）。缺失时给出明确提示。</summary>
+        /// <summary>libmpv-2.dll 放在 exe 同目录（或 lib\ 子目录 / SCREENBOX_LIBMPV_DIR）。缺失时给出明确提示。</summary>
         internal static bool EnsureLibmpv(bool silent)
         {
+            string envDir = Environment.GetEnvironmentVariable("SCREENBOX_LIBMPV_DIR");
+            if (!string.IsNullOrEmpty(envDir) && File.Exists(Path.Combine(envDir, "libmpv-2.dll")))
+            {
+                SetDllDirectory(envDir);
+                return true;
+            }
             string dir = AppDomain.CurrentDomain.BaseDirectory;
             if (File.Exists(Path.Combine(dir, "libmpv-2.dll"))) return true;
             string lib = Path.Combine(dir, "lib");

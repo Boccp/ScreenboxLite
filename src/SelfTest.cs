@@ -321,15 +321,28 @@ namespace ScreenboxLite
                         Check(win.NavControl.BaseTime() < afterPlus5 - 0.5, "E+1 组合键后退 5s 成功");
                     }
 
-                    // ~ 键 (IME VK_PROCESSKEY + ScanTilde 0x29) 进入截图模式（隐藏原生窗口后焦点不丢失）+ Esc 退出截图模式
+                    // ~ 键 (IME VK_PROCESSKEY + ScanTilde 0x29) 进入截图模式（隐藏原生窗口后焦点不丢失）+ 窗外护盾验证 + Esc 退出截图模式
                     SendImeKey(mainHwnd, 0x29);
                     Pump(120);
                     Check(win.IsShotActive, "~ 键中文输入法下进入截图模式成功");
                     Check(GetFocus() == mainHwnd, "进入截图模式隐藏 VideoHost 后 Win32 焦点不丢失");
+                    Check(win.ShotShieldHwnd != IntPtr.Zero && IsWindowVisible(win.ShotShieldHwnd), "截图模式窗外防误点护盾已启用");
+                    Check(SendMessage(win.ShotShieldHwnd, 0x0021 /* WM_MOUSEACTIVATE */, mainHwnd, IntPtr.Zero).ToInt32() == 3,
+                        "窗外防误点护盾返回 MA_NOACTIVATE 不夺取主窗口焦点");
+                    Check(WindowFromPoint(ptScreen) == mainHwnd, "截图模式下主窗口内部点击仍直达主窗口（未被护盾遮挡）");
+
+                    var ptOutside = new POINT { X = Math.Max(2, ptScreen.X - 600), Y = ptScreen.Y };
+                    RECT mainWinRect;
+                    if (GetWindowRect(mainHwnd, out mainWinRect) && mainWinRect.Left > 20)
+                    {
+                        ptOutside = new POINT { X = mainWinRect.Left - 15, Y = (mainWinRect.Top + mainWinRect.Bottom) / 2 };
+                        Check(WindowFromPoint(ptOutside) == win.ShotShieldHwnd, "截图模式下窗口外部点击由护盾层接管（不误点桌面/后台窗口）");
+                    }
 
                     PostKey(mainHwnd, VK_ESCAPE, 0x01);
                     Pump(80);
                     Check(!win.IsShotActive, "截图模式按 Esc 退回播放界面成功");
+                    Check(!IsWindowVisible(win.ShotShieldHwnd), "退出截图模式后窗外护盾立即隐藏");
                     Check(GetFocus() == mainHwnd, "退出截图模式恢复 VideoHost 后 Win32 焦点不丢失");
                 }
             }
@@ -427,6 +440,39 @@ namespace ScreenboxLite
             Check(p == "System.Size" && !d, "升序大小");
             Playlist.ParseSortSpec(null, out p, out d);
             Check(p == "System.ItemNameDisplay" && !d, "默认名称");
+
+            // 验证素材库排序与显式播放列表优先规则
+            string tmpDir = Path.Combine(Path.GetTempPath(), "sbx_sort_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmpDir);
+            string prevSort = Environment.GetEnvironmentVariable("DSH_GALLERY_SORT_SPEC");
+            string prevList = Environment.GetEnvironmentVariable("DSH_GALLERY_PLAYLIST_FILE");
+            try
+            {
+                string fSmall = Path.Combine(tmpDir, "a_small.mp4");
+                string fLarge = Path.Combine(tmpDir, "b_large.mp4");
+                File.WriteAllBytes(fSmall, new byte[10]);
+                File.WriteAllBytes(fLarge, new byte[100]);
+
+                Environment.SetEnvironmentVariable("DSH_GALLERY_SORT_SPEC", "prop:-System.Size;");
+                Environment.SetEnvironmentVariable("DSH_GALLERY_PLAYLIST_FILE", null);
+                Playlist.InitStartupContext(fSmall);
+                var bySizeDesc = Playlist.GetPlaylistForVideo(fSmall);
+                Check(bySizeDesc.Count == 2 && string.Equals(bySizeDesc[0], fLarge, StringComparison.OrdinalIgnoreCase), "素材库按大小降序优先");
+
+                string listPath = Path.Combine(tmpDir, "playlist.txt");
+                File.WriteAllLines(listPath, new[] { fSmall, fLarge });
+                Environment.SetEnvironmentVariable("DSH_GALLERY_PLAYLIST_FILE", listPath);
+                Playlist.InitStartupContext(fLarge);
+                var byExplicit = Playlist.GetPlaylistForVideo(fLarge);
+                Check(byExplicit.Count == 2 && string.Equals(byExplicit[0], fSmall, StringComparison.OrdinalIgnoreCase), "素材库显式列表优先");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("DSH_GALLERY_SORT_SPEC", prevSort);
+                Environment.SetEnvironmentVariable("DSH_GALLERY_PLAYLIST_FILE", prevList);
+                Playlist.InitStartupContext(null);
+                try { Directory.Delete(tmpDir, true); } catch { }
+            }
         }
 
         // ---------------- Win32 ----------------
@@ -438,8 +484,20 @@ namespace ScreenboxLite
             public int X, Y;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
         [DllImport("user32.dll")]
         private static extern bool IsWindowEnabled(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
         [DllImport("user32.dll")]
         private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);

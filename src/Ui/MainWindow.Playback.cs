@@ -119,25 +119,17 @@ namespace ScreenboxLite.Ui
             try
             {
                 string full = Path.GetFullPath(path);
-                string dir = Path.GetDirectoryName(full);
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                _folderVideos = Playlist.GetPlaylistForVideo(full);
+                _videoIndex = _folderVideos.FindIndex(f => string.Equals(f, full, StringComparison.OrdinalIgnoreCase));
+                if (_videoIndex < 0)
                 {
-                    _folderVideos = Playlist.GetSortedFolderVideos(dir);
-                    _videoIndex = _folderVideos.FindIndex(f => string.Equals(f, full, StringComparison.OrdinalIgnoreCase));
-                    if (_videoIndex < 0)
-                    {
-                        _folderVideos.Insert(0, full); // 扩展名不在列表中的文件也允许播放
-                        _videoIndex = 0;
-                    }
-                }
-                else
-                {
-                    _folderVideos = new List<string> { full };
+                    _folderVideos.Insert(0, full); // 扩展名不在列表中的文件也允许播放
                     _videoIndex = 0;
                 }
 
                 _nav.Reset();
-                _hoverSeconds = -1;
+                HideHoverPopup();
+                _hoverImage.Source = null;
                 _loadClock.Restart();
                 _player.Load(full);
                 _player.SetPause(false);

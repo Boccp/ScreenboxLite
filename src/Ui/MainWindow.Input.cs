@@ -45,9 +45,11 @@ namespace ScreenboxLite.Ui
         private double _reverseTarget = -1;
         private DispatcherTimer _outsideMouseTimer;
         private DispatcherTimer _focusGuardTimer;
+        private HwndSource _shieldSource;
 
         // ---- 供自动化自检读取的内部访问器 ----
         internal IntPtr MainHwnd { get { return _mainHwnd; } }
+        internal IntPtr ShotShieldHwnd { get { return _shieldSource != null ? _shieldSource.Handle : IntPtr.Zero; } }
         internal VideoHost VideoHostControl { get { return _videoHost; } }
         internal Grid StageControl { get { return _stage; } }
         internal TextBox JumpBoxControl { get { return _jumpBox; } }
@@ -79,15 +81,24 @@ namespace ScreenboxLite.Ui
             Activated += (s, e) =>
             {
                 if (!IsTypingInJumpBox()) FocusMain();
+                if (_shotActive) UpdateShotShield();
             };
 
-            Deactivated += (s, e) => ReleaseAllHeldKeys();
+            Deactivated += (s, e) =>
+            {
+                ReleaseAllHeldKeys();
+                HideShotShield();
+            };
+
+            LocationChanged += (s, e) => { if (_shotActive && IsActive) UpdateShotShield(); };
+            StateChanged += (s, e) => { if (_shotActive && IsActive) UpdateShotShield(); };
 
             Closed += (s, e) =>
             {
                 ComponentDispatcher.ThreadPreprocessMessage -= OnThreadPreprocessMessage;
                 if (_outsideMouseTimer != null) _outsideMouseTimer.Stop();
                 if (_focusGuardTimer != null) _focusGuardTimer.Stop();
+                DisposeShotShield();
             };
 
             PreviewKeyDown += OnPreviewKeyDown;
@@ -197,15 +208,28 @@ namespace ScreenboxLite.Ui
         // ======================= 物理按键与消息级快捷键（绕过输入法与子窗口） =======================
 
         private const int WM_SETFOCUS = 0x0007;
+        private const int WM_SETCURSOR = 0x0020;
+        private const int WM_MOUSEACTIVATE = 0x0021;
+        private const int WM_NCLBUTTONDOWN = 0x00A1;
+        private const int WM_NCLBUTTONDBLCLK = 0x00A3;
+        private const int WM_NCRBUTTONDOWN = 0x00A4;
+        private const int WM_NCRBUTTONDBLCLK = 0x00A6;
         private const int WM_KEYDOWN = 0x0100;
         private const int WM_KEYUP = 0x0101;
         private const int WM_SYSKEYDOWN = 0x0104;
         private const int WM_SYSKEYUP = 0x0105;
+        private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_LBUTTONDOWN = 0x0201;
         private const int WM_LBUTTONUP = 0x0202;
         private const int WM_LBUTTONDBLCLK = 0x0203;
         private const int WM_RBUTTONDOWN = 0x0204;
+        private const int WM_RBUTTONUP = 0x0205;
+        private const int WM_RBUTTONDBLCLK = 0x0206;
         private const int WM_MBUTTONDOWN = 0x0207;
+        private const int WM_MBUTTONUP = 0x0208;
+        private const int WM_MOUSEWHEEL = 0x020A;
+        private const int WM_XBUTTONDOWN = 0x020B;
+        private const int WM_XBUTTONUP = 0x020C;
 
         // 标准 PC Set-1 物理扫描码（与输入法状态无关）
         private const int ScanEsc = 0x01;
@@ -270,6 +294,27 @@ namespace ScreenboxLite.Ui
                 if (!IsTypingInJumpBox() && hwnd != IntPtr.Zero)
                     ImmAssociateContext(hwnd, IntPtr.Zero);
                 return IntPtr.Zero;
+            }
+            // 截图模式下，防止贴边选框时误点窗口 8px 缩放边框导致拖拽窗口大小
+            if (_shotActive && !_inModalDialog &&
+                (msg == WM_NCLBUTTONDOWN || msg == WM_NCLBUTTONDBLCLK || msg == WM_NCRBUTTONDOWN || msg == WM_NCRBUTTONDBLCLK))
+            {
+                int ht = wParam.ToInt32();
+                if (ht >= 10 && ht <= 17) // HTLEFT(10)..HTBOTTOMRIGHT(17)
+                {
+                    FocusMain();
+                    if (msg == WM_NCRBUTTONDOWN || msg == WM_NCRBUTTONDBLCLK)
+                    {
+                        ShotBack();
+                    }
+                    else
+                    {
+                        var sp = System.Windows.Forms.Control.MousePosition;
+                        ShotMouseDown(_overlayRoot.PointFromScreen(new Point(sp.X, sp.Y)));
+                    }
+                    handled = true;
+                    return IntPtr.Zero;
+                }
             }
             if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN)
             {
@@ -807,6 +852,177 @@ namespace ScreenboxLite.Ui
             public RECT rcCaret;
         }
 
+        // ======================= 截图模式全屏防误点护盾层（紧贴主窗口正下方 Z 序，拦截窗外点击且绝不夺取焦点） =======================
+
+        private const int WS_POPUP = unchecked((int)0x80000000);
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WS_EX_LAYERED = 0x00080000;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const uint LWA_ALPHA = 0x00000002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_SHOWWINDOW = 0x0040;
+        private const int SW_HIDE = 0;
+        private const int MA_NOACTIVATE = 3;
+        private const int IDC_CROSS = 32515;
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+
+        private void EnsureShotShield()
+        {
+            if (_shieldSource != null) return;
+            var p = new HwndSourceParameters("ScreenboxShotShield")
+            {
+                ParentWindow = IntPtr.Zero, // 独立顶层无主窗口，以便精确置于 _mainHwnd 正后方 Z 序
+                WindowStyle = WS_POPUP,
+                ExtendedWindowStyle = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+                PositionX = 0,
+                PositionY = 0,
+                Width = 1,
+                Height = 1
+            };
+            _shieldSource = new HwndSource(p);
+            _shieldSource.AddHook(ShieldWndProc);
+            // Alpha=1（肉眼完全透明，但内核命中测试 100% 实体，彻底挡住桌面与后台窗口误点）
+            SetLayeredWindowAttributes(_shieldSource.Handle, 0, 1, LWA_ALPHA);
+        }
+
+        internal void UpdateShotShield()
+        {
+            if (!_shotActive || _inModalDialog || _mainHwnd == IntPtr.Zero || !IsVisible)
+            {
+                HideShotShield();
+                return;
+            }
+            if (!IsActive && GetForegroundWindow() != _mainHwnd && GetActiveWindow() != _mainHwnd)
+            {
+                HideShotShield();
+                return;
+            }
+
+            EnsureShotShield();
+            IntPtr sh = _shieldSource.Handle;
+            if (sh == IntPtr.Zero) return;
+
+            var vs = System.Windows.Forms.SystemInformation.VirtualScreen;
+            if (Topmost)
+            {
+                SetWindowPos(sh, HWND_TOPMOST, vs.Left, vs.Top, vs.Width, vs.Height, SWP_NOACTIVATE);
+                SetWindowPos(_mainHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+            // 将护盾置于 _mainHwnd 紧邻的下一层：主窗口内部按钮与画面正常交互，窗口外全屏幕区域均由护盾无焦点接管
+            SetWindowPos(sh, _mainHwnd, vs.Left, vs.Top, vs.Width, vs.Height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+
+        internal void HideShotShield()
+        {
+            if (_shieldSource == null || _shieldSource.Handle == IntPtr.Zero) return;
+            if (GetCapture() == _shieldSource.Handle) ReleaseCapture();
+            ShowWindow(_shieldSource.Handle, SW_HIDE);
+        }
+
+        private void DisposeShotShield()
+        {
+            if (_shieldSource == null) return;
+            try
+            {
+                HideShotShield();
+                _shieldSource.RemoveHook(ShieldWndProc);
+                _shieldSource.Dispose();
+            }
+            catch
+            {
+            }
+            _shieldSource = null;
+        }
+
+        private Point OverlayPointFromScreenCursor()
+        {
+            var sp = System.Windows.Forms.Control.MousePosition;
+            return _overlayRoot.PointFromScreen(new Point(sp.X, sp.Y));
+        }
+
+        private IntPtr ShieldWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_MOUSEACTIVATE)
+            {
+                handled = true;
+                return new IntPtr(MA_NOACTIVATE);
+            }
+            if (msg == WM_SETCURSOR)
+            {
+                SetCursor(LoadCursor(IntPtr.Zero, new IntPtr(IDC_CROSS)));
+                handled = true;
+                return new IntPtr(1);
+            }
+            if (!_shotActive || _inModalDialog)
+            {
+                HideShotShield();
+                return IntPtr.Zero;
+            }
+
+            switch (msg)
+            {
+                case WM_LBUTTONDOWN:
+                case WM_LBUTTONDBLCLK:
+                    FocusMain();
+                    ShotMouseDown(OverlayPointFromScreenCursor());
+                    if (!_overlayRoot.IsMouseCaptured && _crop.WantsCapture) SetCapture(hwnd);
+                    handled = true;
+                    return IntPtr.Zero;
+
+                case WM_MOUSEMOVE:
+                    ShotMouseMove(OverlayPointFromScreenCursor(), (wParam.ToInt64() & 1) != 0);
+                    handled = true;
+                    return IntPtr.Zero;
+
+                case WM_LBUTTONUP:
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                    ShotMouseUp(OverlayPointFromScreenCursor());
+                    handled = true;
+                    return IntPtr.Zero;
+
+                case WM_RBUTTONDOWN:
+                case WM_RBUTTONDBLCLK:
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                    FocusMain();
+                    ShotBack();
+                    handled = true;
+                    return IntPtr.Zero;
+
+                case WM_MOUSEWHEEL:
+                    if (_player != null && _player.HasVideo)
+                    {
+                        short wheelDelta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+                        int notches = -(wheelDelta / 120);
+                        if (notches == 0) notches = wheelDelta > 0 ? -1 : 1;
+                        if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0) _nav.StepSeconds(notches);
+                        else _nav.StepFrames(notches);
+                        UpdateTimeUi(true);
+                    }
+                    handled = true;
+                    return IntPtr.Zero;
+
+                case WM_RBUTTONUP:
+                case WM_MBUTTONDOWN:
+                case WM_MBUTTONUP:
+                case WM_XBUTTONDOWN:
+                case WM_XBUTTONUP:
+                    FocusMain();
+                    handled = true;
+                    return IntPtr.Zero;
+
+                case WM_KEYDOWN:
+                case WM_SYSKEYDOWN:
+                case WM_KEYUP:
+                case WM_SYSKEYUP:
+                    if (ProcessRawKeyMessage(_mainHwnd, msg, wParam, lParam))
+                        handled = true;
+                    return IntPtr.Zero;
+            }
+            return IntPtr.Zero;
+        }
+
         [DllImport("user32.dll")]
         private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
@@ -817,7 +1033,34 @@ namespace ScreenboxLite.Ui
         private static extern IntPtr SetFocus(IntPtr hWnd);
 
         [DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+
+        [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetCapture(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetCapture();
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetCursor(IntPtr hCursor);
 
         [DllImport("user32.dll")]
         private static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);

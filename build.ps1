@@ -49,9 +49,19 @@ if (-not (Test-Path $dllOut) -or (Get-Item $dllOut).Length -ne (Get-Item $dll).L
 }
 
 if ($Test) {
-    $p = Start-Process -FilePath $exe -ArgumentList '--self-test' -Wait -PassThru -NoNewWindow
-    if ($p.ExitCode -ne 0) { throw "自检失败（退出码 $($p.ExitCode)），详见 %LocalAppData%\ScreenboxLite\logs" }
-    Write-Host '  自检通过' -ForegroundColor Green
+    # 在部分机器上 Documents 目录下的未签名新 exe 会被系统安全策略拦截执行，复制到 TEMP 并指定 libmpv 目录执行自检
+    $tmpTestExe = Join-Path $env:TEMP ("ScreenboxLite_selftest_" + $PID + ".exe")
+    $prevLibEnv = $env:SCREENBOX_LIBMPV_DIR
+    try {
+        Copy-Item -LiteralPath $exe -Destination $tmpTestExe -Force
+        $env:SCREENBOX_LIBMPV_DIR = (Join-Path $root 'lib')
+        $p = Start-Process -FilePath $tmpTestExe -ArgumentList '--self-test' -Wait -PassThru -NoNewWindow
+        if ($p.ExitCode -ne 0) { throw "自检失败（退出码 $($p.ExitCode)），详见 %LocalAppData%\ScreenboxLite\logs" }
+        Write-Host '  自检通过' -ForegroundColor Green
+    } finally {
+        $env:SCREENBOX_LIBMPV_DIR = $prevLibEnv
+        Remove-Item -LiteralPath $tmpTestExe -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($NoSetup) { return }

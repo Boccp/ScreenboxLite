@@ -55,8 +55,14 @@ $Repos = @(
         Assets = @('out\ScreenboxSetup.exe')
         Deploy = { param($d)
             $setup = Join-Path $d 'out\ScreenboxSetup.exe'
-            $p = Start-Process $setup -ArgumentList '/silent' -Wait -PassThru
-            if ($p.ExitCode -ne 0) { throw "静默安装失败（退出码 $($p.ExitCode)）" }
+            $tmpSetup = Join-Path $env:TEMP ("ScreenboxSetup_deploy_" + $PID + ".exe")
+            try {
+                Copy-Item -LiteralPath $setup -Destination $tmpSetup -Force
+                $p = Start-Process $tmpSetup -ArgumentList '/silent' -Wait -PassThru
+                if ($p.ExitCode -ne 0) { throw "静默安装失败（退出码 $($p.ExitCode)）" }
+            } finally {
+                Remove-Item -LiteralPath $tmpSetup -Force -ErrorAction SilentlyContinue
+            }
         }
     },
     @{
@@ -77,7 +83,8 @@ $Repos = @(
             $desktop = [Environment]::GetFolderPath('Desktop')
             $lnk1 = Join-Path $desktop 'DSH 画师图库管理器.lnk'
             $lnk2 = Join-Path $desktop 'Files 文件管理器.lnk'
-            if (-not (Test-Path $lnk1) -and -not (Test-Path $lnk2)) {
+            $lnk3 = Join-Path $desktop 'DSH 画师素材库管理器.lnk'
+            if (-not (Test-Path $lnk1) -and -not (Test-Path $lnk2) -and -not (Test-Path $lnk3)) {
                 $sh = New-Object -ComObject WScript.Shell
                 $sc = $sh.CreateShortcut($lnk1)
                 $sc.TargetPath = Join-Path $toolsDir 'dsh-gallery-explorer.exe'

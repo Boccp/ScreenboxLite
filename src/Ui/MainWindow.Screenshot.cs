@@ -78,6 +78,7 @@ namespace ScreenboxLite.Ui
             _lastBounds = VideoRect();
             RenderSelection();
             FocusMain();
+            UpdateShotShield();
             UpdateAim(Mouse.GetPosition(_overlayRoot));
             // 正在导航（如滚轮刚滚过）时，落定后会再刷新一次
             if (_nav.Busy) _grabGeneration++;
@@ -88,6 +89,7 @@ namespace ScreenboxLite.Ui
             if (_overlayRoot.IsMouseCaptured) _overlayRoot.ReleaseMouseCapture();
             _shotActive = false;
             _saveWhenReady = false;
+            HideShotShield();
             _crop.Reset();
             HideSelectionVisuals();
             _overlayRoot.Visibility = Visibility.Collapsed;
