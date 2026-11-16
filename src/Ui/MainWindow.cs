@@ -79,11 +79,6 @@ namespace ScreenboxLite.Ui
         private Popup _hoverPopup;
         private Image _hoverImage;
         private TextBlock _hoverTimeText;
-        private Popup _shotPreviewPopup;
-        private Image _shotPreviewImage;
-        private TextBlock _shotPreviewName;
-        private TextBlock _shotPreviewPath;
-        private DispatcherTimer _shotPreviewTimer;
 
         private static readonly double[] Speeds = { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0 };
 
@@ -399,30 +394,30 @@ namespace ScreenboxLite.Ui
 
             // 左：播放/切换/逐帧/时间
             var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            var playBtn = Theme.MakeButton("", 46, 34);
+            var playBtn = Theme.MakeButton("", 42, 34);
             playBtn.ToolTip = "播放 / 暂停 (Space 或 K)";
             _playIcon = new TextBlock { Text = "▶", FontSize = 15, HorizontalAlignment = HorizontalAlignment.Center };
             playBtn.Content = _playIcon;
             playBtn.Click += (s, e) => TogglePlayPause();
             left.Children.Add(playBtn);
-            left.Children.Add(Spaced(Theme.MakeButton("⏮ 上一个", 82, 34), 6, "切换同目录上一个视频 (PageUp / Shift+P)", () => SwitchNeighbor(-1)));
-            left.Children.Add(Spaced(Theme.MakeButton("⏭ 下一个", 82, 34), 6, "切换同目录下一个视频 (PageDown / Shift+N)", () => SwitchNeighbor(1)));
-            left.Children.Add(Spaced(Theme.MakeButton("⏪ -1帧", 66, 34), 10, "上一帧 (快捷键 , 逗号)", () => _nav.StepFrames(-1)));
-            left.Children.Add(Spaced(Theme.MakeButton("+1帧 ⏩", 66, 34), 4, "下一帧 (快捷键 . 句号)", () => _nav.StepFrames(1)));
-            _timeText = new TextBlock { Text = "00:00:00.000 / 00:00:00.000", FontFamily = Theme.Mono, FontSize = 13.5, Foreground = Theme.Frozen(Color.FromRgb(230, 230, 230)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0) };
+            left.Children.Add(Spaced(Theme.MakeButton("⏮ 上一个", 76, 34), 5, "切换同目录上一个视频 (PageUp / Shift+P)", () => SwitchNeighbor(-1)));
+            left.Children.Add(Spaced(Theme.MakeButton("⏭ 下一个", 76, 34), 5, "切换同目录下一个视频 (PageDown / Shift+N)", () => SwitchNeighbor(1)));
+            left.Children.Add(Spaced(Theme.MakeButton("⏪ -1帧", 60, 34), 8, "上一帧 (快捷键 , 逗号)", () => _nav.StepFrames(-1)));
+            left.Children.Add(Spaced(Theme.MakeButton("+1帧 ⏩", 60, 34), 4, "下一帧 (快捷键 . 句号)", () => _nav.StepFrames(1)));
+            _timeText = new TextBlock { Text = "00:00:00.000 / 00:00:00.000", FontFamily = Theme.Mono, FontSize = 13, Foreground = Theme.Frozen(Color.FromRgb(230, 230, 230)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
             left.Children.Add(_timeText);
-            _frameText = new TextBlock { Text = "", FontFamily = Theme.Mono, FontSize = 12, Foreground = Theme.TextFaint, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0), ToolTip = "当前帧号 / 帧率" };
+            _frameText = new TextBlock { Text = "", FontFamily = Theme.Mono, FontSize = 11.5, Foreground = Theme.TextFaint, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), ToolTip = "当前帧号 / 帧率" };
             left.Children.Add(_frameText);
             transport.Children.Add(left);
 
             // 中：定点跳转
             var center = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            var jumpLabel = Theme.Label("定点跳转:", Theme.TextDim, 12.5);
-            jumpLabel.Margin = new Thickness(0, 0, 6, 0);
+            var jumpLabel = Theme.Label("定点:", Theme.TextDim, 12);
+            jumpLabel.Margin = new Thickness(0, 0, 4, 0);
             center.Children.Add(jumpLabel);
             _jumpBox = new TextBox
             {
-                Width = 92,
+                Width = 84,
                 Height = 28,
                 Text = "00:00:05",
                 Focusable = false,
@@ -446,17 +441,24 @@ namespace ScreenboxLite.Ui
                 else if (e.Key == Key.Escape) { FocusMain(); e.Handled = true; }
             };
             center.Children.Add(_jumpBox);
-            center.Children.Add(Spaced(Theme.MakeButton("跳转", 52, 28), 4, null, () => JumpToInput(false)));
-            center.Children.Add(Spaced(Theme.MakeButton("跳转并全屏截图", 112, 28), 6, null, () => JumpToInput(true)));
+            center.Children.Add(Spaced(Theme.MakeButton("跳转", 46, 28), 4, null, () => JumpToInput(false)));
+            center.Children.Add(Spaced(Theme.MakeButton("跳转截图", 72, 28), 5, "定位至指定时间并立即保存完整画面截图", () => JumpToInput(true)));
             Grid.SetColumn(center, 1);
             transport.Children.Add(center);
 
-            // 右：倍速/音量/全屏
+            // 右：历史截图队列 / 倍速 / 音量 / 全屏
             var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            _historyBtn = Theme.MakeButton("🖼 历史截图 (0)", 114, 32);
+            _historyBtn.Margin = new Thickness(0, 0, 10, 0);
+            _historyBtn.FontWeight = FontWeights.SemiBold;
+            _historyBtn.ToolTip = "展开 / 收起本次历史截图队列（大图检视、单点删除、原位恢复误删）";
+            _historyBtn.Click += (s, e) => ToggleHistoryPopup();
+            right.Children.Add(_historyBtn);
+
             var speedLabel = Theme.Label("倍速:", Theme.TextDim, 12);
             speedLabel.Margin = new Thickness(0, 0, 4, 0);
             right.Children.Add(speedLabel);
-            _speedCombo = new ComboBox { Width = 68, Height = 28, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0), Focusable = false, IsTabStop = false };
+            _speedCombo = new ComboBox { Width = 64, Height = 28, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), Focusable = false, IsTabStop = false };
             foreach (double sp in Speeds) _speedCombo.Items.Add(sp.ToString("0.##") + "x");
             _speedCombo.SelectedIndex = 3;
             _speedCombo.SelectionChanged += (s, e) =>
@@ -467,18 +469,18 @@ namespace ScreenboxLite.Ui
             _speedCombo.DropDownClosed += (s, e) => FocusMain();
             right.Children.Add(_speedCombo);
 
-            _volumeLockBtn = Theme.MakeButton("🔒 锁0", 62, 28);
-            _volumeLockBtn.Margin = new Thickness(0, 0, 6, 0);
+            _volumeLockBtn = Theme.MakeButton("🔒 锁0", 58, 28);
+            _volumeLockBtn.Margin = new Thickness(0, 0, 5, 0);
             _volumeLockBtn.ToolTip = "彻底锁定音量为 0（默认开启；开启时强制归零并锁定，点击关闭后可从 0 重新调节音量）";
             _volumeLockBtn.Click += (s, e) => ToggleVolumeLock();
             right.Children.Add(_volumeLockBtn);
-            _muteBtn = Theme.MakeButton("🔇", 34, 28);
-            _muteBtn.Margin = new Thickness(0, 0, 6, 0);
+            _muteBtn = Theme.MakeButton("🔇", 32, 28);
+            _muteBtn.Margin = new Thickness(0, 0, 5, 0);
             _muteBtn.ToolTip = "静音 / 取消静音 (快捷键 M)";
             _muteBtn.Click += (s, e) => ToggleMute();
             right.Children.Add(_muteBtn);
 
-            _volumeArea = new Grid { Width = 92, Height = 26, Background = Brushes.Transparent, Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0), ToolTip = "单击或拖动调节音量（需先关闭旁边的「锁0」按钮）" };
+            _volumeArea = new Grid { Width = 78, Height = 26, Background = Brushes.Transparent, Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 5, 0), ToolTip = "单击或拖动调节音量（需先关闭旁边的「锁0」按钮）" };
             _volumeArea.Children.Add(new Border { Height = 6, Background = Theme.Track, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center });
             _volumeFill = new Border { Height = 6, Width = 0, Background = Theme.AccentFill, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
             _volumeArea.Children.Add(_volumeFill);
@@ -486,9 +488,9 @@ namespace ScreenboxLite.Ui
             _volumeArea.Children.Add(_volumeThumb);
             _volumeArea.SizeChanged += (s, e) => UpdateVolumeUi();
             right.Children.Add(_volumeArea);
-            _volumeText = new TextBlock { Width = 38, FontFamily = Theme.Mono, FontSize = 11.5, Foreground = Theme.Frozen(Color.FromRgb(210, 210, 210)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+            _volumeText = new TextBlock { Width = 36, FontFamily = Theme.Mono, FontSize = 11.5, Foreground = Theme.Frozen(Color.FromRgb(210, 210, 210)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
             right.Children.Add(_volumeText);
-            var fsBtn = Theme.MakeButton("⛶ 全屏 (F)", 82, 34);
+            var fsBtn = Theme.MakeButton("⛶ 全屏 (F)", 76, 34);
             fsBtn.Click += (s, e) => ToggleFullscreen();
             right.Children.Add(fsBtn);
             Grid.SetColumn(right, 2);
@@ -543,36 +545,7 @@ namespace ScreenboxLite.Ui
                 Child = hoverBorder
             };
 
-            // 截图保存成功的小卡片：显示在屏幕左下角，不遮挡画面
-            var card = new Border
-            {
-                Width = 370,
-                Height = 64,
-                Padding = new Thickness(8, 5, 10, 5),
-                Background = Theme.Frozen(Color.FromArgb(248, 28, 32, 36)),
-                BorderBrush = Theme.Accent,
-                BorderThickness = new Thickness(1.5),
-                CornerRadius = new CornerRadius(6),
-                Cursor = Cursors.Hand,
-                ToolTip = "点击在资源管理器中定位该截图"
-            };
-            card.MouseLeftButtonUp += (s, e) => RevealLastScreenshot();
-            var cs = new StackPanel { Orientation = Orientation.Horizontal };
-            var thumbBorder = new Border { Width = 92, Height = 52, Background = Brushes.Black, BorderBrush = Theme.Frozen(Color.FromArgb(90, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 10, 0) };
-            _shotPreviewImage = new Image { Stretch = Stretch.Uniform };
-            thumbBorder.Child = _shotPreviewImage;
-            cs.Children.Add(thumbBorder);
-            var ts = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Width = 246 };
-            ts.Children.Add(new TextBlock { Text = "✔ 已自动保存截图（点击定位文件）", Foreground = Theme.Accent, FontWeight = FontWeights.SemiBold, FontSize = 12 });
-            _shotPreviewName = new TextBlock { Foreground = Brushes.White, FontSize = 11.5, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 1) };
-            _shotPreviewPath = new TextBlock { Foreground = Theme.Frozen(Color.FromRgb(165, 165, 165)), FontSize = 10.5, TextTrimming = TextTrimming.CharacterEllipsis };
-            ts.Children.Add(_shotPreviewName);
-            ts.Children.Add(_shotPreviewPath);
-            cs.Children.Add(ts);
-            card.Child = cs;
-            _shotPreviewPopup = new Popup { AllowsTransparency = true, Placement = PlacementMode.AbsolutePoint, StaysOpen = true, Focusable = false, Child = card };
-            _shotPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.5) };
-            _shotPreviewTimer.Tick += (s, e) => { _shotPreviewTimer.Stop(); _shotPreviewPopup.IsOpen = false; };
+            BuildHistoryPopup();
         }
 
         // ======================= 通用小工具 =======================

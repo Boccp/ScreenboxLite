@@ -75,6 +75,7 @@ namespace ScreenboxLite.Ui
             _shotActive = true;
             _saveWhenReady = false;
             _crop.Reset();
+            CloseHistoryPopup();
             HideHoverPopup();
             _frozenImage.Visibility = Visibility.Visible;
             _overlayRoot.Visibility = Visibility.Visible;
@@ -213,50 +214,15 @@ namespace ScreenboxLite.Ui
             if (bmp == null) return;
             try
             {
-                string path = ScreenshotWriter.Save(bmp, _settings.SaveFolderPath, ex =>
-                    Dispatcher.BeginInvoke(new Action(() => ShowToast("截图写入失败: " + ex.Message))));
-                _lastSavedPath = path;
-                ShowScreenshotCard(bmp, Path.GetFileName(path), path);
-                ShowToast("已保存截图: " + Path.GetFileName(path));
+                ShotHistoryItem item = CreateAndSaveHistoryItem(bmp, _settings.SaveFolderPath);
+                _lastSavedPath = item.FilePath;
+                ShowToast("✔ 已保存截图: " + item.FileName + "（已加入底栏历史截图队列）");
             }
             catch (Exception ex)
             {
                 Log.Warn(ex, "截图保存失败");
                 ShowToast("截图保存失败: " + ex.Message);
             }
-        }
-
-        private void ShowScreenshotCard(BitmapSource bmp, string name, string path)
-        {
-            _shotPreviewImage.Source = bmp;
-            _shotPreviewName.Text = name;
-            _shotPreviewPath.Text = path;
-            try
-            {
-                var screen = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle);
-                var wa = screen.WorkingArea;
-                var src = PresentationSource.FromVisual(this);
-                Matrix toDip = src != null && src.CompositionTarget != null ? src.CompositionTarget.TransformFromDevice : Matrix.Identity;
-                double scale = src != null && src.CompositionTarget != null ? src.CompositionTarget.TransformToDevice.M22 : 1.0;
-                Point dip = toDip.Transform(new Point(wa.Left + 18 * scale, wa.Bottom - (64 + 18) * scale));
-                _shotPreviewPopup.HorizontalOffset = dip.X;
-                _shotPreviewPopup.VerticalOffset = dip.Y;
-            }
-            catch (Exception ex)
-            {
-                Log.Debug("定位截图卡片失败: " + ex.Message);
-                _shotPreviewPopup.HorizontalOffset = 18;
-                _shotPreviewPopup.VerticalOffset = SystemParameters.WorkArea.Bottom - 82;
-            }
-            _shotPreviewPopup.IsOpen = true;
-            _shotPreviewTimer.Stop();
-            _shotPreviewTimer.Start();
-        }
-
-        private void RevealLastScreenshot()
-        {
-            if (!string.IsNullOrEmpty(_lastSavedPath) && File.Exists(_lastSavedPath))
-                Process.Start("explorer.exe", "/select,\"" + _lastSavedPath + "\"");
         }
 
         // ======================= 选框交互 =======================

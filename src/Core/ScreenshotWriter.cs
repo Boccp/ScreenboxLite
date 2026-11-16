@@ -7,6 +7,21 @@ using System.Windows.Media.Imaging;
 
 namespace ScreenboxLite.Core
 {
+    internal sealed class SaveSync
+    {
+        public readonly object Gate = new object();
+        public bool Completed;
+
+        public void WaitCompleted(int timeoutMs)
+        {
+            lock (Gate)
+            {
+                if (!Completed)
+                    Monitor.Wait(Gate, timeoutMs);
+            }
+        }
+    }
+
     /// <summary>截图裁剪与保存。文件命名沿用 v1：“yy Md 当日秒数.png”，重名追加 (2)(3)…</summary>
     internal static class ScreenshotWriter
     {
@@ -57,8 +72,25 @@ namespace ScreenboxLite.Core
             return cropped;
         }
 
-        /// <summary>立即分配文件名（占位防重名），后台编码写入 PNG。onError 在后台线程回调。</summary>
-        public static string Save(BitmapSource bitmap, string folder, Action<Exception> onError)
+        /// <summary>生成高清晰度缩略预览图（默认最大边 640px，兼顾大卡片清晰度与极低内存占用）。</summary>
+        public static BitmapSource MakePreviewThumb(BitmapSource src, int maxEdge = 640)
+        {
+            if (src == null) return null;
+            int w = src.PixelWidth, h = src.PixelHeight;
+            if (w <= maxEdge && h <= maxEdge)
+            {
+                if (!src.IsFrozen && src.CanFreeze) src.Freeze();
+                return src;
+            }
+            double scale = (double)maxEdge / Math.Max(w, h);
+            var tb = new TransformedBitmap(src, new ScaleTransform(scale, scale));
+            var bgr = new FormatConvertedBitmap(tb, PixelFormats.Bgr32, null, 0);
+            bgr.Freeze();
+            return bgr;
+        }
+
+        /// <summary>立即分配文件名（占位防重名），后台编码写入 PNG。sync 可用于在极速单点删除前等待 PNG 落盘完成。</summary>
+        public static string Save(BitmapSource bitmap, string folder, Action<Exception> onError, SaveSync sync = null)
         {
             Directory.CreateDirectory(folder);
             DateTime now = DateTime.Now;
@@ -87,6 +119,17 @@ namespace ScreenboxLite.Core
                 {
                     Log.Warn(ex, "截图写入失败 " + path);
                     if (onError != null) onError(ex);
+                }
+                finally
+                {
+                    if (sync != null)
+                    {
+                        lock (sync.Gate)
+                        {
+                            sync.Completed = true;
+                            Monitor.PulseAll(sync.Gate);
+                        }
+                    }
                 }
             });
             return path;

@@ -80,13 +80,14 @@ namespace ScreenboxLite.Ui
             Closing += (s, e) =>
             {
                 _settings.Save();
-                _shotPreviewPopup.IsOpen = false;
+                CloseHistoryPopup();
                 _hoverPopup.IsOpen = false;
             };
             Closed += (s, e) =>
             {
                 _thumbs.Dispose();
                 _player.Dispose();
+                CleanupHistoryTrash();
                 if (Perf.HasSamples) Log.Info("本次运行性能统计:\r\n" + Perf.Report());
             };
         }

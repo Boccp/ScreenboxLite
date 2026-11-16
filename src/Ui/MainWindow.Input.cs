@@ -88,10 +88,23 @@ namespace ScreenboxLite.Ui
             {
                 ReleaseAllHeldKeys();
                 HideShotShield();
+                CloseHistoryPopup();
             };
 
-            LocationChanged += (s, e) => { if (_shotActive && IsActive) UpdateShotShield(); };
-            StateChanged += (s, e) => { if (_shotActive && IsActive) UpdateShotShield(); };
+            LocationChanged += (s, e) =>
+            {
+                if (_shotActive && IsActive) UpdateShotShield();
+                if (IsHistoryPopupOpen) RepositionHistoryPopup();
+            };
+            SizeChanged += (s, e) =>
+            {
+                if (IsHistoryPopupOpen) RepositionHistoryPopup();
+            };
+            StateChanged += (s, e) =>
+            {
+                if (_shotActive && IsActive) UpdateShotShield();
+                if (IsHistoryPopupOpen) RepositionHistoryPopup();
+            };
 
             Closed += (s, e) =>
             {
@@ -618,6 +631,12 @@ namespace ScreenboxLite.Ui
                 if (_shotActive)
                 {
                     if (!repeat) ShotBack();
+                    MarkRawHandled(VK_ESCAPE);
+                    return true;
+                }
+                if (IsHistoryPopupOpen)
+                {
+                    if (!repeat) CloseHistoryPopup();
                     MarkRawHandled(VK_ESCAPE);
                     return true;
                 }

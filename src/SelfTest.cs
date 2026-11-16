@@ -208,6 +208,53 @@ namespace ScreenboxLite
                 Pump(60);
                 Check(win.WindowStyle != WindowStyle.None, "全屏二次退出成功");
 
+                // 验证底栏「历史截图队列」：截图后不自动弹窗遮挡底栏、按需展开大图队列、单点删除与原位置无损恢复误删
+                string tmpHistDir = Path.Combine(Path.GetTempPath(), "sbx_hist_" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    double stageHBefore = win.StageControl.ActualHeight;
+                    int[] dummyPx = new int[64 * 36];
+                    for (int i = 0; i < dummyPx.Length; i++) dummyPx[i] = 0x2288CC;
+                    var dummyBmp = BitmapSource.Create(64, 36, 96, 96, System.Windows.Media.PixelFormats.Bgr32, null, dummyPx, 64 * 4);
+                    dummyBmp.Freeze();
+
+                    var item1 = win.CreateAndSaveHistoryItem(dummyBmp, tmpHistDir);
+                    var item2 = win.CreateAndSaveHistoryItem(dummyBmp, tmpHistDir);
+                    item1.Sync.WaitCompleted(3000);
+                    item2.Sync.WaitCompleted(3000);
+                    Check(!win.IsHistoryPopupOpen, "保存截图后默认不弹出遮挡底栏的浮窗");
+                    Check(win.ActiveHistoryCount == 2 && win.HistoryItemsForTest.Count == 2, "历史截图队列计数准确");
+                    Check(win.HistoryItemsForTest[0] == item2 && win.HistoryItemsForTest[1] == item1, "历史队列按最新在前排序");
+                    Check(File.Exists(item2.FilePath) && new FileInfo(item2.FilePath).Length > 50, "截图 PNG 已完整落盘");
+
+                    win.ToggleHistoryPopup();
+                    Pump(50);
+                    Check(win.IsHistoryPopupOpen, "点击底栏历史截图按钮成功展开队列");
+                    Check(GetFocus() == mainHwnd, "展开历史截图队列后主窗口 Win32 焦点不丢失");
+                    Check(Math.Abs(win.StageControl.ActualHeight - stageHBefore) < 0.5, "展开历史队列严格保持三段式零位移铁律");
+
+                    Check(win.DeleteHistoryItem(item2), "单点删除截图执行成功");
+                    Check(item2.IsDeleted && !File.Exists(item2.FilePath), "单点删除后原截图文件立即从保存目录移除");
+                    Check(win.ActiveHistoryCount == 1 && win.HistoryItemsForTest[0] == item2, "删除后原卡片槽位保留在原位置（零跳动）");
+                    Check(item2.DeleteBtn.Visibility == Visibility.Collapsed && item2.RestoreBtn.Visibility == Visibility.Visible,
+                        "删除后原卡片位置切换为「恢复误删」按钮");
+
+                    Check(win.RestoreHistoryItem(item2), "点击原位「恢复误删」执行成功");
+                    Check(!item2.IsDeleted && File.Exists(item2.FilePath) && new FileInfo(item2.FilePath).Length > 50,
+                        "恢复误删后原截图无损还原回原路径");
+                    Check(win.ActiveHistoryCount == 2 && win.HistoryItemsForTest[0] == item2, "恢复后有效计数与槽位完全一致");
+                    Check(item2.DeleteBtn.Visibility == Visibility.Visible && item2.RestoreBtn.Visibility == Visibility.Collapsed,
+                        "恢复后卡片还原为正常态按钮");
+
+                    PostKey(mainHwnd, VK_ESCAPE, 0x01);
+                    Pump(50);
+                    Check(!win.IsHistoryPopupOpen && GetFocus() == mainHwnd, "按 Esc 收起历史截图队列且焦点保持在主窗口");
+                }
+                finally
+                {
+                    try { if (Directory.Exists(tmpHistDir)) Directory.Delete(tmpHistDir, true); } catch { }
+                }
+
                 // 若传入真实视频，继续验证 d3d11 画面解码、屏幕实画呈现、点击穿透、截图模式焦点及全部核心播放快捷键
                 if (videoPath != null)
                 {
