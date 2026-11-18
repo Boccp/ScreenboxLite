@@ -39,8 +39,20 @@ namespace ScreenboxLite.Ui
             _thumbs.Ready += OnThumbReady;
 
             _player.TimeChanged += OnTimeChanged;
-            _player.PauseChanged += () => _playIcon.Text = _player.Paused ? "▶" : "⏸";
-            _player.VideoChanged += () => { UpdateTimeUi(true); UpdateVideoVisibility(); };
+            _player.PauseChanged += () =>
+            {
+                if (_playIconPath != null)
+                {
+                    bool playing = _player.CurrentPath != null && !_player.Paused;
+                    _playIconPath.Data = playing ? Theme.GeoPause : Theme.GeoPlay;
+                }
+            };
+            _player.VideoChanged += () =>
+            {
+                UpdateVideoSpecBadge();
+                UpdateTimeUi(true);
+                UpdateVideoVisibility();
+            };
             _player.FileLoaded += OnFileLoaded;
             _player.VideoReconfig += () => { _videoHost.DisableChildInput(); UpdateVideoVisibility(); if (!IsTypingInJumpBox()) FocusMain(); };
             _player.EndFile += reason =>
@@ -137,10 +149,14 @@ namespace ScreenboxLite.Ui
                 _thumbs.Open(full);
 
                 string name = Path.GetFileName(full);
-                _playlistCounterText.Text = string.Format("[{0}/{1}]", _videoIndex + 1, _folderVideos.Count);
-                _titleText.Text = name + "  (" + full + ")";
+                _playlistCounterText.Text = string.Format("{0} / {1}", _videoIndex + 1, _folderVideos.Count);
+                if (_playlistBadge != null) _playlistBadge.Visibility = Visibility.Visible;
+                _titleText.Text = name;
+                _titleText.Foreground = Theme.TextMain;
+                _titleText.FontWeight = FontWeights.SemiBold;
+                _titleText.ToolTip = full;
                 Title = name + " - Screenbox";
-                _emptyPanel.Visibility = Visibility.Collapsed;
+                if (_emptyCard != null) _emptyCard.Visibility = Visibility.Collapsed;
                 Activate();
                 FocusMain();
             }
@@ -175,10 +191,19 @@ namespace ScreenboxLite.Ui
             if (!IsTypingInJumpBox()) FocusMain();
         }
 
+        private void UpdateVideoSpecBadge()
+        {
+            if (_videoSpecText != null && _player.HasVideo)
+            {
+                _videoSpecText.Text = _player.VideoWidth + "×" + _player.VideoHeight;
+            }
+            UpdateResponsiveLayout();
+        }
+
         private void UpdateVideoVisibility()
         {
             bool loaded = _player.CurrentPath != null;
-            _emptyPanel.Visibility = loaded ? Visibility.Collapsed : Visibility.Visible;
+            if (_emptyCard != null) _emptyCard.Visibility = loaded ? Visibility.Collapsed : Visibility.Visible;
             // 截图模式下隐藏原生窗口，露出 WPF 的冻结帧与选框（原生窗口之上无法绘制 WPF 内容）
             _videoHost.Visibility = loaded && !_shotActive ? Visibility.Visible : Visibility.Hidden;
         }
@@ -213,6 +238,8 @@ namespace ScreenboxLite.Ui
                 if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal; // 先还原才能盖住任务栏
                 WindowState = WindowState.Maximized;
             }
+            UpdateFullscreenButtonUi();
+            UpdateResponsiveLayout();
             FocusMain();
         }
 
@@ -280,24 +307,36 @@ namespace ScreenboxLite.Ui
             return _nav.Busy ? _nav.TargetTime : _player.TimePos;
         }
 
-        private void UpdateTimeUi(bool force)
+        internal void UpdateTimeUi(bool force)
         {
             double dur = _player.Duration;
             double t = DisplayTime();
-            _timeText.Text = FormatTime(t) + " / " + FormatTime(dur);
-            if (_player.Fps > 1)
+            if (_timeCurrentText != null) _timeCurrentText.Text = FormatTime(t);
+            if (_timeTotalText != null) _timeTotalText.Text = FormatTime(dur);
+            if (_frameText != null)
             {
-                long frame = (long)Math.Round(t * _player.Fps);
-                _frameText.Text = "#" + frame + "  " + _player.Fps.ToString("0.###", CultureInfo.InvariantCulture) + "fps";
-            }
-            else
-            {
-                _frameText.Text = "";
+                if (_player.CurrentPath == null)
+                {
+                    _frameText.Text = "未加载视频";
+                    _frameText.Foreground = Theme.TextFaint;
+                }
+                else if (_player.Fps > 1)
+                {
+                    long frame = (long)Math.Round(t * _player.Fps);
+                    _frameText.Text = "帧 #" + frame + " · " + _player.Fps.ToString("0.###", CultureInfo.InvariantCulture) + " fps";
+                    _frameText.Foreground = Theme.Frozen(Color.FromRgb(110, 192, 222));
+                }
+                else
+                {
+                    _frameText.Text = "准备就绪";
+                    _frameText.Foreground = Theme.TextFaint;
+                }
             }
             double w = _timeline.ActualWidth;
             double px = (dur > 0 && w > 0) ? Clamp(t / dur, 0, 1) * w : 0;
             _timelineFill.Width = px;
-            _timelineThumb.Margin = new Thickness(px - 7, 0, 0, 0);
+            double r = _timelineThumb.Width > 0 ? _timelineThumb.Width / 2.0 : 7.0;
+            _timelineThumb.Margin = new Thickness(px - r, 0, 0, 0);
         }
 
         // ======================= 时间轴：点击 / 拖动 / 悬停 =======================
@@ -445,35 +484,53 @@ namespace ScreenboxLite.Ui
             e.Handled = true;
             if (_settings.VolumeZeroLocked)
             {
-                ShowToast("🔒 音量已彻底锁定为 0，请先点击「🔒 锁0」按钮解锁后再从 0 调节");
+                ShowToast("🔒 音量已彻底锁定为 0，请先点击「锁0」按钮解锁后再从 0 调节");
                 return;
             }
             _volumeArea.CaptureMouse();
-            SetVolume(e.GetPosition(_volumeArea).X / Math.Max(1, _volumeArea.ActualWidth), true);
+            double trackW = Math.Max(1.0, _volumeArea.ActualWidth - 12.0);
+            SetVolume((e.GetPosition(_volumeArea).X - 6.0) / trackW, true);
         }
 
         private void VolumeArea_MouseMove(object sender, MouseEventArgs e)
         {
             if (!_volumeArea.IsMouseCaptured || e.LeftButton != MouseButtonState.Pressed) return;
-            SetVolume(e.GetPosition(_volumeArea).X / Math.Max(1, _volumeArea.ActualWidth), true);
+            double trackW = Math.Max(1.0, _volumeArea.ActualWidth - 12.0);
+            SetVolume((e.GetPosition(_volumeArea).X - 6.0) / trackW, true);
         }
 
         private void UpdateVolumeUi()
         {
             bool locked = _settings.VolumeZeroLocked;
-            _volumeLockBtn.Content = locked ? "🔒 锁0" : "🔓 解锁";
+            if (_volumeLockIcon != null)
+            {
+                _volumeLockIcon.Data = locked ? Theme.GeoLock : Theme.GeoUnlock;
+                _volumeLockIcon.Fill = locked ? Theme.LockedText : Theme.TextMain;
+            }
+            if (_volumeLockText != null) _volumeLockText.Text = locked ? "锁0" : "音量";
+            _volumeLockBtn.Foreground = locked ? Theme.LockedText : Theme.TextMain;
             _volumeLockBtn.Background = locked ? Theme.LockedBg : Theme.ButtonBg;
             _volumeLockBtn.BorderBrush = locked ? Theme.LockedBorder : Theme.ButtonBorder;
+
             int pct = locked ? 0 : (int)Math.Round(_settings.Volume * 100);
-            _muteBtn.Content = (locked || _settings.IsMuted || pct == 0) ? "🔇" : (pct < 50 ? "🔉" : "🔊");
-            _muteBtn.Opacity = locked ? 0.5 : 1.0;
-            _volumeText.Text = locked ? "锁0%" : (_settings.IsMuted ? "静音" : pct + "%");
-            _volumeText.Foreground = locked ? Theme.LockedText : Theme.Frozen(Color.FromRgb(210, 210, 210));
-            _volumeArea.Opacity = locked ? 0.45 : 1.0;
-            double w = _volumeArea.ActualWidth > 0 ? _volumeArea.ActualWidth : 92;
-            double px = (locked || _settings.IsMuted ? 0 : _settings.Volume) * w;
+            bool silent = locked || _settings.IsMuted || pct == 0;
+            if (_muteIconPath != null)
+            {
+                _muteIconPath.Data = silent ? Theme.GeoVolumeMute : (pct < 50 ? Theme.GeoVolumeLow : Theme.GeoVolumeHigh);
+                _muteIconPath.Fill = silent ? Theme.TextFaint : Theme.Accent;
+            }
+            _muteBtn.Opacity = locked ? 0.55 : 1.0;
+
+            _volumeText.Text = locked ? "0%" : (_settings.IsMuted ? "静音" : pct + "%");
+            _volumeText.Foreground = locked ? Theme.TextFaint : Theme.TextDim;
+            _volumeArea.Opacity = locked ? 0.42 : 1.0;
+
+            double w = _volumeArea.ActualWidth > 0 ? _volumeArea.ActualWidth : 68;
+            double trackW = Math.Max(0, w - 12.0);
+            double px = (locked || _settings.IsMuted ? 0 : _settings.Volume) * trackW;
             _volumeFill.Width = px;
-            _volumeThumb.Margin = new Thickness(px - 6, 0, 0, 0);
+            _volumeThumb.Margin = new Thickness(px, 0, 0, 0);
+            UpdateResponsiveLayout();
         }
     }
 }

@@ -45,6 +45,13 @@ namespace ScreenboxLite
                 Log.Flush();
                 return code;
             }
+            if (args.Length >= 2 && args[0] == "--ui-snapshot")
+            {
+                EnsureLibmpv(true);
+                int code = SelfTest.RenderUiSnapshots(args[1]);
+                Log.Flush();
+                return code;
+            }
 
             if (!EnsureLibmpv(false)) return 2;
             PreferHighPerformanceGpu();

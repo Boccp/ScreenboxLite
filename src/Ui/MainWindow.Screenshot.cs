@@ -71,6 +71,7 @@ namespace ScreenboxLite.Ui
             }
             _shotFlipped = false;
             SetRawFrozen(frame);
+            UpdateShotFlipUi();
 
             _shotActive = true;
             _saveWhenReady = false;
@@ -81,6 +82,7 @@ namespace ScreenboxLite.Ui
             _overlayRoot.Visibility = Visibility.Visible;
             _topScreenshotBar.Visibility = Visibility.Visible;
             _bottomBar.IsHitTestVisible = false;
+            _bottomBar.Opacity = 0.52;
             UpdateVideoVisibility(); // 隐藏原生视频窗口，露出冻结帧
             _lastBounds = VideoRect();
             RenderSelection();
@@ -103,6 +105,8 @@ namespace ScreenboxLite.Ui
             _overlayRoot.Visibility = Visibility.Collapsed;
             _topScreenshotBar.Visibility = Visibility.Collapsed;
             _bottomBar.IsHitTestVisible = true;
+            _bottomBar.Opacity = 1.0;
+            UpdateShotFlipUi();
             UpdateVideoVisibility();
             _frozenImage.Visibility = Visibility.Collapsed;
             _frozenImage.Source = null;
@@ -147,10 +151,21 @@ namespace ScreenboxLite.Ui
             if (!_shotActive || _rawFrozen == null) return;
             _shotFlipped = !_shotFlipped;
             ApplyFrozenView();
+            UpdateShotFlipUi();
             _crop.MirrorHorizontal(VideoRect());
             RenderSelection();
             UpdateAim(Mouse.GetPosition(_overlayRoot));
-            ShowToast(_shotFlipped ? "↔ 已水平翻转画面（保存截图同步翻转，再按 Tab 还原）" : "↔ 已还原原始画面方向");
+            ShowToast(_shotFlipped ? "↔ 已水平镜像翻转（保存同步生效，再按 Tab 还原）" : "↔ 已还原原始画面方向");
+        }
+
+        private void UpdateShotFlipUi()
+        {
+            if (_shotFlipBtn == null) return;
+            _shotFlipBtn.Background = _shotFlipped ? Theme.FlipActiveBg : Theme.ButtonBg;
+            _shotFlipBtn.BorderBrush = _shotFlipped ? Theme.FlipActiveBorder : Theme.ButtonBorder;
+            _shotFlipBtn.Foreground = _shotFlipped ? Theme.FlipActiveText : Theme.TextMain;
+            if (_shotFlipIcon != null) _shotFlipIcon.Fill = _shotFlipped ? Theme.FlipActiveText : Theme.TextMain;
+            if (_shotFlipText != null) _shotFlipText.Text = _shotFlipped ? "已镜像 (Tab)" : "镜像 (Tab)";
         }
 
         /// <summary>模式内帧落定后，后台重新取帧（不阻塞 UI），完成后替换冻结帧。</summary>

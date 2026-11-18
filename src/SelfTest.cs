@@ -54,6 +54,69 @@ namespace ScreenboxLite
             return Finish("UI自检");
         }
 
+        public static int RenderUiSnapshots(string outDir)
+        {
+            Directory.CreateDirectory(outDir);
+            var app = Application.Current ?? new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            var win = new MainWindow(null) { ShowInTaskbar = false, Width = 1280, Height = 720 };
+            try
+            {
+                win.Show();
+                Pump(120);
+                SaveVisualPng(win, Path.Combine(outDir, "1_empty_1280.png"));
+
+                win.PopulateSampleReadoutForTest();
+                win.UpdateResponsiveLayout();
+                win.UpdateLayout();
+                Pump(40);
+                SaveVisualPng(win, Path.Combine(outDir, "2_playback_1280.png"));
+
+                win.SetMockScreenshotBarForTest(true, true);
+                win.UpdateLayout();
+                Pump(40);
+                SaveVisualPng(win, Path.Combine(outDir, "3_shotbar_1280.png"));
+                win.SetMockScreenshotBarForTest(false, false);
+
+                win.Width = 960;
+                win.UpdateResponsiveLayout();
+                win.UpdateLayout();
+                Pump(40);
+                win.PopulateSampleReadoutForTest();
+                win.UpdateLayout();
+                SaveVisualPng(win, Path.Combine(outDir, "4_playback_960.png"));
+
+                win.Width = 820;
+                win.UpdateResponsiveLayout();
+                win.UpdateLayout();
+                Pump(40);
+                win.PopulateSampleReadoutForTest();
+                win.UpdateLayout();
+                SaveVisualPng(win, Path.Combine(outDir, "5_playback_820.png"));
+                return 0;
+            }
+            finally
+            {
+                win.Close();
+                Pump(40);
+            }
+        }
+
+        private static void SaveVisualPng(Window win, string path)
+        {
+            var el = win.Content as FrameworkElement;
+            if (el == null) return;
+            int w = Math.Max(1, (int)Math.Round(el.ActualWidth));
+            int h = Math.Max(1, (int)Math.Round(el.ActualHeight));
+            var rtb = new RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            rtb.Render(el);
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(rtb));
+            using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write))
+            {
+                enc.Save(fs);
+            }
+        }
+
         private static int Finish(string title)
         {
             string summary = Failures.Count == 0
@@ -255,6 +318,9 @@ namespace ScreenboxLite
                     try { if (Directory.Exists(tmpHistDir)) Directory.Delete(tmpHistDir, true); } catch { }
                 }
 
+                // 验证多档窗口宽度（1440 / 1280 / 1100 / 960 / 820 最小宽度）下顶栏与底栏零遮挡、零越界
+                VerifyNoBarOverlapAcrossWidths(win);
+
                 // 若传入真实视频，继续验证 d3d11 画面解码、屏幕实画呈现、点击穿透、截图模式焦点及全部核心播放快捷键
                 if (videoPath != null)
                 {
@@ -407,6 +473,66 @@ namespace ScreenboxLite
             {
                 win.Close();
                 Pump(50);
+            }
+        }
+
+        private static Rect BoundsInWindow(FrameworkElement el, Window win)
+        {
+            if (el == null || !el.IsVisible || el.ActualWidth <= 0 || el.ActualHeight <= 0)
+                return Rect.Empty;
+            Point tl = el.TranslatePoint(new Point(0, 0), win);
+            return new Rect(tl.X, tl.Y, el.ActualWidth, el.ActualHeight);
+        }
+
+        private static void VerifyNoBarOverlapAcrossWidths(MainWindow win)
+        {
+            double origW = win.Width;
+            double origH = win.Height;
+            try
+            {
+                win.PopulateSampleReadoutForTest();
+                int[] testWidths = new int[] { 1440, 1280, 1100, 960, 820 };
+                for (int i = 0; i < testWidths.Length; i++)
+                {
+                    int w = testWidths[i];
+                    win.Width = w;
+                    win.Height = 640;
+                    win.UpdateResponsiveLayout();
+                    win.UpdateLayout();
+                    Pump(25);
+                    win.PopulateSampleReadoutForTest();
+                    win.UpdateLayout();
+
+                    var contentRoot = win.Content as FrameworkElement;
+                    double clientW = contentRoot != null && contentRoot.ActualWidth > 0 ? contentRoot.ActualWidth : win.ActualWidth;
+
+                    Rect tl = BoundsInWindow(win.TopLeftForTest, win);
+                    Rect tc = BoundsInWindow(win.TopCenterForTest, win);
+                    Rect tr = BoundsInWindow(win.TopRightForTest, win);
+                    bool topOk = !tl.IsEmpty && !tc.IsEmpty && !tr.IsEmpty &&
+                                 tl.Right <= tc.Left + 0.5 &&
+                                 tc.Right <= tr.Left + 0.5 &&
+                                 tr.Right <= clientW + 1.0;
+                    Check(topOk, "顶栏在宽度 " + w + "px 下无任何挤压遮挡");
+
+                    Rect bl = BoundsInWindow(win.BottomLeftForTest, win);
+                    Rect bc = BoundsInWindow(win.BottomCenterForTest, win);
+                    Rect br = BoundsInWindow(win.BottomRightForTest, win);
+                    bool botOk = !bl.IsEmpty && !bc.IsEmpty && !br.IsEmpty &&
+                                 bc.Width >= 110 &&
+                                 bl.Right <= bc.Left + 0.5 &&
+                                 bc.Right <= br.Left + 0.5 &&
+                                 br.Right <= clientW + 1.0;
+                    Check(botOk, string.Format("底栏在宽度 {0}px 下无任何挤压遮挡 (L={1:0}..{2:0}, C={3:0}..{4:0}, R={5:0}..{6:0}, client={7:0})",
+                        w, bl.Left, bl.Right, bc.Left, bc.Right, br.Left, br.Right, clientW));
+                }
+            }
+            finally
+            {
+                win.Width = origW;
+                win.Height = origH;
+                win.UpdateResponsiveLayout();
+                win.UpdateLayout();
             }
         }
 
