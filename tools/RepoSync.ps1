@@ -234,7 +234,7 @@ function Invoke-Push($r) {
     Write-Step "  ✅ $($r.Title) v$(Get-Version $d) 发布并部署完成" 'Green'
 }
 
-# version.txt 对应的 tag 不存在时：打 tag、建 Release、上传安装包
+# version.txt 对应的 tag 不存在或 Release 附件缺失时：打 tag、建/查 Release、断点补传安装包
 function Publish-Release($r) {
     $d = $r.Dir
     $tag = 'v' + (Get-Version $d)
@@ -247,26 +247,89 @@ function Publish-Release($r) {
     } finally {
         $ErrorActionPreference = $prevEap
     }
-    if ($remoteTag) { Write-Step "  $tag 已发布过（改动只进入代码仓库；要发新版请先修改 version.txt）" 'DarkGray'; return }
 
-    if ($localTag) { Invoke-Git $d @('tag', '-d', $tag) -Quiet }
-    Invoke-Git $d @('tag', $tag) -Quiet
-    Invoke-Git $d @('push', 'origin', $tag) -Quiet
+    if (-not $remoteTag) {
+        if ($localTag) { Invoke-Git $d @('tag', '-d', $tag) -Quiet }
+        Invoke-Git $d @('tag', $tag) -Quiet
+        Invoke-Git $d @('push', 'origin', $tag) -Quiet
+    }
 
     $token = Get-GitHubToken $d
-    if (-not $token) { Write-Step "  已推送 tag $tag；未取得 GitHub 凭证，请在网页上为该 tag 创建 Release 并上传 $($r.Assets -join ', ')" 'Yellow'; return }
+    if (-not $token) {
+        if ($remoteTag) { Write-Step "  $tag 已发布过（改动只进入代码仓库；要发新版请先修改 version.txt）" 'DarkGray'; return }
+        Write-Step "  已推送 tag $tag；未取得 GitHub 凭证，请在网页上为该 tag 创建 Release 并上传 $($r.Assets -join ', ')" 'Yellow'
+        return
+    }
 
     $h = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'RepoSync' }
     $restOpts = @{ Headers = $h }
     if ($Script:ActiveProxy) { $restOpts['Proxy'] = $Script:ActiveProxy }
-    $body = @{ tag_name = $tag; name = "$($r.Name) $tag"; body = $notes } | ConvertTo-Json
-    $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases" @restOpts -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json' -TimeoutSec 60
+
+    $rel = $null
+    try {
+        $rel = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases/tags/$tag" @restOpts -TimeoutSec 30
+    } catch {}
+
+    if ($remoteTag -and $rel) {
+        $allUploaded = $true
+        foreach ($a in $r.Assets) {
+            $expectedName = [IO.Path]::GetFileName((Join-Path $d $a))
+            $matched = @($rel.assets | Where-Object { $_.name -eq $expectedName -and $_.state -eq 'uploaded' -and $_.size -gt 0 })
+            if ($matched.Count -eq 0) { $allUploaded = $false; break }
+        }
+        if ($allUploaded) {
+            Write-Step "  $tag 已发布过（改动只进入代码仓库；要发新版请先修改 version.txt）" 'DarkGray'
+            return
+        }
+        Write-Step "  检测到 $tag Release 缺少完整附件，自动补传 ..." 'Yellow'
+    }
+
+    if (-not $rel) {
+        $body = @{ tag_name = $tag; name = "$($r.Name) $tag"; body = $notes } | ConvertTo-Json
+        $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases" @restOpts -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json' -TimeoutSec 60
+    }
+
+    $curlExe = Join-Path $env:SystemRoot 'System32\curl.exe'
     foreach ($a in $r.Assets) {
         $file = Join-Path $d $a
         $name = [IO.Path]::GetFileName($file)
+        $existing = @($rel.assets | Where-Object { $_.name -eq $name })
+        if ($existing.Count -gt 0) {
+            if ($existing[0].state -eq 'uploaded' -and $existing[0].size -gt 0) {
+                Write-Step "  Release 附件 $name 已就绪" 'DarkGray'
+                continue
+            }
+            try {
+                Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Owner/$($r.Name)/releases/assets/$($existing[0].id)" @restOpts -TimeoutSec 30 | Out-Null
+            } catch {}
+        }
+
         $url = ($rel.upload_url -replace '\{.*\}', '') + "?name=$name"
         Write-Step "  正在上传 Release 附件 $name ($([math]::Round((Get-Item $file).Length/1MB, 2)) MB) ..."
-        Invoke-RestMethod -Method Post -Uri $url @restOpts -InFile $file -ContentType 'application/octet-stream' -TimeoutSec 600 | Out-Null
+        $uploaded = $false
+        if (Test-Path $curlExe) {
+            $curlArgs = @('--http1.1', '--retry', '4', '--retry-delay', '2', '--retry-all-errors', '--fail', '-sS', '-o', 'NUL', '-X', 'POST', '-K', '-', '--data-binary', "@$file")
+            if ($Script:ActiveProxy) { $curlArgs = @('-x', $Script:ActiveProxy) + $curlArgs }
+            $curlCfg = @(
+                "url = `"$url`"",
+                "header = `"Authorization: Bearer $token`"",
+                "header = `"Accept: application/vnd.github+json`"",
+                "header = `"Content-Type: application/octet-stream`"",
+                "header = `"User-Agent: RepoSync`""
+            ) -join "`n"
+            $prevEap2 = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $curlOut = $curlCfg | & $curlExe @curlArgs 2>&1
+                if ($LASTEXITCODE -eq 0) { $uploaded = $true }
+                else { Write-Step "  curl 上传重试未成功 ($LASTEXITCODE)，回退 Invoke-RestMethod: $($curlOut | Out-String)" 'DarkYellow' }
+            } finally {
+                $ErrorActionPreference = $prevEap2
+            }
+        }
+        if (-not $uploaded) {
+            Invoke-RestMethod -Method Post -Uri $url @restOpts -InFile $file -ContentType 'application/octet-stream' -TimeoutSec 600 | Out-Null
+        }
         Write-Step "  已上传 Release 附件 $name" 'Green'
     }
 }

@@ -15,6 +15,7 @@
   2. **消除 `100x` 倍速冲击与导航残留**（`MpvPlayer.cs`、`FrameNavigator.cs`、`MainWindow.Playback.cs`）：单帧步进不再改动播放 `speed`（避免音频重采样器与 `ao=wasapi` 时钟失步追帧），多帧突发连滚限速为温和的 `12x`；后退连滚改为单飞合并（杜绝向硬解器并发狂发数十次 flush/seek）；恢复正常播放前强制执行 `CancelForPlay()` 清空在途导航队列，并在回退步进/突发连滚后自动重对齐音视频 PTS、释放 `vo->backstep` 缓存表面。
   3. **截图抓帧严格单飞节流**（`MainWindow.Screenshot.cs`）：修复 `RefreshFrozenFrameAsync` 在连续滚轮时并发派发多个 `GrabFrame()` 线程及 `_grabInFlight` 偶发死锁的问题，确保同一时刻最多 `1` 个 GPU 回读在途。
 - **自动化验证**（`SelfTest.cs`）：新增内存合成左红右蓝非对称帧的端到端测试，覆盖非 `~` 模式下 `Tab` 启用、进 `~` 模式像素方向校验、保存后保持翻转、落盘 PNG 像素校验、切文件自动重置，全部通过（`exit 0`）。
+- **发布工具链加固**（`tools/RepoSync.ps1`）：`Publish-Release` 新增远端 Release 附件完整性校验（若已推 tag 但大体积安装包上传中途断连缺失，重跑 `push` 会自动清理残缺附件并补传）及 `System32\curl.exe` HTTP/1.1 多重重试流式上传（避免 `.NET 4` `Invoke-RestMethod` 上传 `45.5 MB` 安装包偶发 TLS 连接重置）。
 
 ---
 
