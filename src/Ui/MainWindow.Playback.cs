@@ -129,6 +129,7 @@ namespace ScreenboxLite.Ui
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
             if (_shotActive) ExitScreenshotMode();
+            ResetMirrorOnFileChange();
             try
             {
                 string full = Path.GetFullPath(path);
@@ -216,6 +217,8 @@ namespace ScreenboxLite.Ui
             if (_player.Paused)
             {
                 if (_shotActive) ExitScreenshotMode();
+                _nav.CancelForPlay();
+                if (_speedCombo.SelectedIndex >= 0) _player.SetSpeed(Speeds[_speedCombo.SelectedIndex]);
                 if (_player.EofReached) _player.SeekAbsolute(0, true);
                 _player.SetPause(false);
             }
@@ -386,7 +389,11 @@ namespace ScreenboxLite.Ui
             Point p = e.GetPosition(_timeline);
             double t = SecondsAtX(p.X);
             if (Math.Abs(p.X - _scrubDownX) >= 2) _nav.SeekTo(t, true); // 松手落到精确帧
-            if (_wasPlayingBeforeScrub && _player.Paused) _player.SetPause(false);
+            if (_wasPlayingBeforeScrub && _player.Paused)
+            {
+                _nav.CancelForPlay();
+                _player.SetPause(false);
+            }
             if (!_timeline.IsMouseOver) HideHoverPopup();
             e.Handled = true;
         }

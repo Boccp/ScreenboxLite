@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -86,6 +88,8 @@ namespace ScreenboxLite.Mpv
                 Opt("vo", "gpu-next"),
                 Opt("gpu-api", "d3d11"),
                 Opt("hwdec", "auto-safe"),         // 硬解（含 AV1/HEVC），不再需要 ffmpeg 转码
+                Opt("hwdec-extra-frames", "48"),   // 充足的硬解帧池：彻底杜绝频繁回退逐帧/抓帧耗尽 d3d11va 表面导致恢复播放卡顿与花屏乱序
+                Opt("audio-pitch-correction", "yes"),
                 Opt("hr-seek", "yes"),             // 绝对定位一律精确到帧
                 Opt("hr-seek-framedrop", "yes"),   // 实测：精确跳转快约 2 倍、4K 长 GOP 回退 p50 从 1180ms 降至 83ms，落点一致
                 Opt("cache", "yes"),               // 本地文件也开 demuxer 缓存：回退/重复定位不再读盘
@@ -141,25 +145,101 @@ namespace ScreenboxLite.Mpv
 
         // ================= 命令 =================
 
+        private double _userSpeed = 1.0;
+        private bool _turboActive;
+        private volatile bool _dirtyForResume;
+        private bool _horizontalMirror;
+        private static string _hflipShaderPath;
+
+        public bool IsHorizontalMirrored { get { return _horizontalMirror; } }
+
         public void Load(string path)
         {
             CurrentPath = path;
             TimePos = 0;
             Duration = 0;
             EofReached = false;
+            _dirtyForResume = false;
+            EndStepping();
             CommandAsync("loadfile", path, "replace");
         }
 
         public void SetPause(bool pause)
         {
-            if (!pause) EndStepping();
+            EndStepping();
+            if (!pause && _dirtyForResume)
+            {
+                _dirtyForResume = false;
+                if (!EofReached && Duration > 0)
+                {
+                    double pts = GetDouble("time-pos", TimePos);
+                    if (pts > 0)
+                        SeekAbsolute(Math.Max(0, pts - FrameDuration * 0.25), true);
+                }
+            }
             SetFlag("pause", pause);
             Paused = pause; // 立即反映到 UI，mpv 回报后再校正
         }
 
-        public void SetSpeed(double speed) { SetDouble("speed", speed); }
+        public void SetSpeed(double speed)
+        {
+            _userSpeed = speed;
+            if (!_turboActive) SetDouble("speed", speed);
+        }
+
         public void SetVolume(double volume01) { SetDouble("volume", Math.Round(volume01 * 100.0, 1)); }
         public void SetMute(bool mute) { SetFlag("mute", mute); }
+
+        /// <summary>GPU 着色器级无损水平镜像翻转（保留 d3d11va 零拷贝硬解，暂停或播放态均可 0 延迟即时切换）。</summary>
+        public void SetHorizontalMirror(bool mirror)
+        {
+            if (_h == IntPtr.Zero || _horizontalMirror == mirror) return;
+            _horizontalMirror = mirror;
+            if (mirror)
+            {
+                string shader = EnsureHflipShaderFile();
+                CommandSync("change-list", "glsl-shaders", "set", shader);
+            }
+            else
+            {
+                CommandSync("change-list", "glsl-shaders", "clr", "");
+            }
+        }
+
+        private static string EnsureHflipShaderFile()
+        {
+            if (!string.IsNullOrEmpty(_hflipShaderPath) && File.Exists(_hflipShaderPath))
+                return _hflipShaderPath;
+            string dir = Path.Combine(Path.GetTempPath(), "ScreenboxLite");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, "hflip_main_v1.glsl");
+            const string glsl =
+                "//!HOOK MAIN\n" +
+                "//!BIND HOOKED\n" +
+                "//!DESC Screenbox Horizontal Mirror\n" +
+                "vec4 hook() {\n" +
+                "    return HOOKED_tex(vec2(1.0 - HOOKED_pos.x, HOOKED_pos.y));\n" +
+                "}\n";
+            if (!File.Exists(path))
+                File.WriteAllText(path, glsl, new UTF8Encoding(false));
+            _hflipShaderPath = path;
+            return path;
+        }
+
+        private void CommandSync(params string[] args)
+        {
+            if (_h == IntPtr.Zero) return;
+            IntPtr[] a = MpvNative.AllocArgs(args);
+            try
+            {
+                int err = MpvNative.mpv_command(_h, a);
+                if (err < 0) Log.Warn("mpv 同步命令失败 " + string.Join(" ", args) + ": " + MpvNative.ErrorString(err));
+            }
+            finally
+            {
+                MpvNative.FreeArgs(a);
+            }
+        }
 
         /// <summary>精确定位（exact=false 时只到关键帧，用于拖动预览）。</summary>
         public ulong SeekAbsolute(double seconds, bool exact)
@@ -170,11 +250,10 @@ namespace ScreenboxLite.Mpv
         public enum StepMode { Play, Seek, Turbo }
 
         /// <summary>
-        /// 逐帧前进方式。实测（1080p30/GOP250）：Play≈33ms（等 1/fps 播放节拍）、Seek≈95ms（回关键帧）、
-        /// Turbo≈0.6ms 且 100% 落在预期帧，故默认 Turbo。可用环境变量 SCREENBOX_STEP_MODE 覆盖以便对比。
+        /// 逐帧前进方式：单帧步进由 mpv 原生立即呈现下一帧（不改动 speed，杜绝音频时钟失步）；
+        /// 多帧突发连滚（frames > 1）临时提速至 12x 快速跨帧，落定或恢复播放时立即还原用户倍速。
         /// </summary>
         public static StepMode ForwardStepMode = StepMode.Turbo;
-        private double _speedBeforeTurbo = -1;
 
         public ulong FrameStep(int frames)
         {
@@ -184,11 +263,11 @@ namespace ScreenboxLite.Mpv
                 case StepMode.Seek:
                     return CommandAsync("frame-step", n, "seek");
                 case StepMode.Turbo:
-                    // 暂停中逐帧：临时把播放速度调到极高，帧一解码完就呈现，不必等待 1/fps 的播放节拍
-                    if (_speedBeforeTurbo < 0)
+                    if (frames > 1 && !_turboActive)
                     {
-                        _speedBeforeTurbo = GetDouble("speed", 1.0);
-                        SetDouble("speed", 100.0);
+                        _turboActive = true;
+                        _dirtyForResume = true;
+                        SetDouble("speed", 12.0);
                     }
                     return CommandAsync("frame-step", n, "mute");
                 default:
@@ -196,13 +275,21 @@ namespace ScreenboxLite.Mpv
             }
         }
 
-        /// <summary>逐帧序列结束（由导航器调用），恢复正常播放速度。</summary>
+        /// <summary>逐帧序列结束（由导航器调用），恢复用户设定的正常播放速度。</summary>
         public void EndStepping()
         {
-            if (_speedBeforeTurbo >= 0) { SetDouble("speed", _speedBeforeTurbo); _speedBeforeTurbo = -1; }
+            if (_turboActive)
+            {
+                _turboActive = false;
+                SetDouble("speed", _userSpeed);
+            }
         }
 
-        public ulong FrameBackStep() { return CommandAsync("frame-back-step"); }
+        public ulong FrameBackStep()
+        {
+            _dirtyForResume = true;
+            return CommandAsync("frame-back-step");
+        }
 
         /// <summary>
         /// 截取当前帧的原始像素（视频原始分辨率，无字幕/OSD）。线程安全，可在后台线程调用。

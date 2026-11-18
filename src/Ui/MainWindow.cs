@@ -38,6 +38,9 @@ namespace ScreenboxLite.Ui
         private Border _videoSpecBadge;
         private TextBlock _videoSpecText;
         private Button _topOpenFolderBtn;
+        private Button _normalFlipBtn;
+        private System.Windows.Shapes.Path _normalFlipIcon;
+        private TextBlock _normalFlipText;
 
         private Button _shotFlipBtn;
         private System.Windows.Shapes.Path _shotFlipIcon;
@@ -232,6 +235,17 @@ namespace ScreenboxLite.Ui
             shotBtn.ToolTip = "进入/确认无损原画框选截图（快捷键 ~，画面比例与位置零跳动）";
             shotBtn.Click += (s, e) => HandleTilde();
             _topLeftPanel.Children.Add(shotBtn);
+
+            var normFlipContent = new StackPanel { Orientation = Orientation.Horizontal };
+            _normalFlipIcon = Theme.MakeIcon(Theme.GeoFlip, Theme.TextDim, 12.5);
+            _normalFlipText = new TextBlock { Text = "镜像 (Tab)", FontSize = 12, Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            normFlipContent.Children.Add(_normalFlipIcon);
+            normFlipContent.Children.Add(_normalFlipText);
+            _normalFlipBtn = Theme.MakeFlexButton(normFlipContent, 32, 10, false);
+            _normalFlipBtn.Margin = new Thickness(8, 0, 0, 0);
+            _normalFlipBtn.ToolTip = "水平镜像翻转视频画面与截图（快捷键 Tab，播放与截图模式通用，切换视频或关闭软件后自动重置）";
+            _normalFlipBtn.Click += (s, e) => ToggleHorizontalMirror();
+            _topLeftPanel.Children.Add(_normalFlipBtn);
             _topNormalHeader.Children.Add(_topLeftPanel);
 
             _topTitleHost = new Grid
@@ -361,8 +375,8 @@ namespace ScreenboxLite.Ui
             flipContent.Children.Add(_shotFlipText);
             _shotFlipBtn = Theme.MakeFlexButton(flipContent, 28, 9, false);
             _shotFlipBtn.Margin = new Thickness(10, 0, 0, 0);
-            _shotFlipBtn.ToolTip = "水平镜像翻转当前冻结画面与保存结果 (快捷键 Tab)";
-            _shotFlipBtn.Click += (s, e) => ToggleShotHorizontalFlip();
+            _shotFlipBtn.ToolTip = "水平镜像翻转画面与保存结果（快捷键 Tab，保存后保持翻转，切换视频或关闭软件后自动重置）";
+            _shotFlipBtn.Click += (s, e) => ToggleHorizontalMirror();
             shotLeft.Children.Add(_shotFlipBtn);
 
             var restoreCropBtn = Theme.MakeFlexButton(Theme.IconLabel(Theme.GeoRestore, "上次框 (R)", Theme.TextMain, 12, 11.5), 28, 9, false);
@@ -554,7 +568,7 @@ namespace ScreenboxLite.Ui
             AddShortcutHint(keyGrid, 0, 1, "滚轮 / , .", "零延迟逐帧后退 / 逐帧前进");
             AddShortcutHint(keyGrid, 1, 0, "按住 A / D", "5 倍速快退 / 快进 (S+AD 单帧)");
             AddShortcutHint(keyGrid, 1, 1, "1 / 2 / 3", "跳 5s / 20s / 60s (按 E 后退)");
-            AddShortcutHint(keyGrid, 2, 0, "R / Tab", "恢复上次选框 / 画面水平镜像");
+            AddShortcutHint(keyGrid, 2, 0, "Tab / R", "随时水平镜像 / 恢复上次选框");
             AddShortcutHint(keyGrid, 2, 1, "右键 / Esc", "逐级撤销调框与退出截图模式");
             emptyStack.Children.Add(keyGrid);
 
@@ -1082,6 +1096,10 @@ namespace ScreenboxLite.Ui
             }
 
             if (_fsBtnText != null) _fsBtnText.Visibility = medium ? Visibility.Visible : Visibility.Collapsed;
+            if (_normalFlipText != null)
+            {
+                _normalFlipText.Text = compact ? (_videoMirrored ? "已镜像" : "镜像") : (_videoMirrored ? "已镜像 (Tab)" : "镜像 (Tab)");
+            }
             if (_historyBtnText != null)
             {
                 _historyBtnText.Visibility = medium ? Visibility.Visible : Visibility.Collapsed;
@@ -1125,7 +1143,7 @@ namespace ScreenboxLite.Ui
 
         internal void SetMockScreenshotBarForTest(bool active, bool flipped)
         {
-            _shotFlipped = flipped;
+            _videoMirrored = flipped;
             UpdateShotFlipUi();
             _topScreenshotBar.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
             _bottomBar.Opacity = active ? 0.52 : 1.0;

@@ -73,6 +73,19 @@ namespace ScreenboxLite.Ui
             _player.EndStepping();
         }
 
+        /// <summary>切换回正常连续播放前调用：取消一切在途/排队的逐帧与跳转，防止旧回调在播放途中篡改位置或速度。</summary>
+        public void CancelForPlay()
+        {
+            _inFlight = Op.None;
+            _inFlightCmdId = 0;
+            _pendingFrames = 0;
+            _pendingSeek = -1;
+            _expect = -1;
+            _watchdog.Stop();
+            _player.EndStepping();
+            TargetTime = _player.TimePos;
+        }
+
         /// <summary>逐帧（正=前进）。</summary>
         public void StepFrames(int frames)
         {
@@ -81,11 +94,13 @@ namespace ScreenboxLite.Ui
             double fd = _player.FrameDuration;
             TargetTime = Clamp(BaseTime() + frames * fd);
 
-            // 在途的后退 seek：直接以新目标取代（目标仍在旧落点之前时），避免两次回关键帧解码
-            if (_inFlightFromSteps && (_inFlight == Op.StepBack || _inFlight == Op.Seek) && TargetTime < _expect + fd * 0.5)
+            // 若已有后退/精确跳转在途：统一合并进 _pendingSeek（单飞节流），等当前解码帧落定后一步到位跳往最新目标，
+            // 避免滚轮连滚时向 d3d11va 连续狂发数十次并发 flush/seek 污染硬解参考帧池。
+            if (_inFlight == Op.StepBack || _inFlight == Op.Seek)
             {
                 _pendingFrames = 0;
-                IssueSeek(TargetTime, true, true);
+                _pendingSeek = TargetTime;
+                _pendingSeekExact = true;
                 return;
             }
 

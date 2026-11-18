@@ -321,6 +321,12 @@ namespace ScreenboxLite
                 // 验证多档窗口宽度（1440 / 1280 / 1100 / 960 / 820 最小宽度）下顶栏与底栏零遮挡、零越界
                 VerifyNoBarOverlapAcrossWidths(win);
 
+                // 无外部视频依赖：用内存合成的左红右蓝测试帧端到端验证全局 Tab 镜像（非 ~ 模式启用、截图后保持、切文件重置）与导航器清理
+                if (videoPath == null)
+                {
+                    VerifyGlobalTabMirrorAndCleanResume(win);
+                }
+
                 // 若传入真实视频，继续验证 d3d11 画面解码、屏幕实画呈现、点击穿透、截图模式焦点及全部核心播放快捷键
                 if (videoPath != null)
                 {
@@ -533,6 +539,127 @@ namespace ScreenboxLite
                 win.Height = origH;
                 win.UpdateResponsiveLayout();
                 win.UpdateLayout();
+            }
+        }
+
+        private static void SaveSolidSplitPng(string path, int w, int h, int leftBgr, int rightBgr)
+        {
+            int[] px = new int[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    px[y * w + x] = (x < w / 2) ? leftBgr : rightBgr;
+                }
+            }
+            var bmp = BitmapSource.Create(w, h, 96, 96, System.Windows.Media.PixelFormats.Bgr32, null, px, w * 4);
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(bmp));
+            using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write))
+            {
+                enc.Save(fs);
+            }
+        }
+
+        private static bool IsLeftBlueRightRed(BitmapSource bmp)
+        {
+            if (bmp == null || bmp.PixelWidth < 16 || bmp.PixelHeight < 4) return false;
+            var bgr = bmp.Format == System.Windows.Media.PixelFormats.Bgr32
+                ? bmp
+                : new FormatConvertedBitmap(bmp, System.Windows.Media.PixelFormats.Bgr32, null, 0);
+            int y = bgr.PixelHeight / 2;
+            byte[] leftPx = new byte[4];
+            byte[] rightPx = new byte[4];
+            bgr.CopyPixels(new Int32Rect(4, y, 1, 1), leftPx, 4, 0);
+            bgr.CopyPixels(new Int32Rect(bgr.PixelWidth - 5, y, 1, 1), rightPx, 4, 0);
+            // Bgr32: [0]=Blue, [1]=Green, [2]=Red
+            bool leftIsBlue = leftPx[0] > 180 && leftPx[2] < 60;
+            bool rightIsRed = rightPx[2] > 180 && rightPx[0] < 60;
+            return leftIsBlue && rightIsRed;
+        }
+
+        private static void VerifyGlobalTabMirrorAndCleanResume(MainWindow win)
+        {
+            string tmpDir = Path.Combine(Path.GetTempPath(), "sbx_mirror_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmpDir);
+            string shotOutDir = Path.Combine(tmpDir, "shots");
+            Directory.CreateDirectory(shotOutDir);
+            win.TempSaveFolderOverride = shotOutDir;
+
+            try
+            {
+                string fileA = Path.Combine(tmpDir, "a_red_blue.png");
+                string fileB = Path.Combine(tmpDir, "b_green_yellow.png");
+                // Bgr32: 0xFF0000 = Red, 0x0000FF = Blue
+                SaveSolidSplitPng(fileA, 64, 36, 0xFF0000, 0x0000FF);
+                SaveSolidSplitPng(fileB, 64, 36, 0x00FF00, 0xFFFF00);
+
+                win.LoadVideo(fileA);
+                var sw = Stopwatch.StartNew();
+                while (sw.ElapsedMilliseconds < 2500 && (!win.PlayerControl.HasVideo || win.PlayerControl.GrabFrame() == null))
+                {
+                    Pump(40);
+                }
+                Pump(80);
+                Check(win.PlayerControl.HasVideo, "测试媒体加载成功");
+                Check(!win.IsVideoMirrored && !win.PlayerControl.IsHorizontalMirrored, "初始打开时默认未水平翻转");
+
+                // 1) 未开启 ~ 截图模式时，直接按 Tab 即可启用水平镜像
+                IntPtr mainHwnd = win.MainHwnd;
+                Check(!win.IsShotActive, "当前未处于 ~ 截图模式");
+                SendImeKey(mainHwnd, 0x0F); // ScanTab = 0x0F
+                Pump(80);
+                Check(win.IsVideoMirrored && win.PlayerControl.IsHorizontalMirrored, "非 ~ 模式下按 Tab 直接启用水平翻转成功");
+
+                // 2) 开启 ~ 截图模式：继承已翻转状态，且冻结帧像素精确为左蓝右红（无漏翻、无双重翻转）
+                SendImeKey(mainHwnd, 0x29); // ScanTilde = 0x29 -> 进入截图模式
+                Pump(100);
+                Check(win.IsShotActive && win.IsVideoMirrored, "进入 ~ 截图模式继承已翻转状态");
+                Check(IsLeftBlueRightRed(win.FrozenFrameForTest), "镜像后进入 ~ 模式的冻结帧像素方向精确为左蓝右红");
+
+                // 3) 再次按 ~ 保存截图退出：截图后保持翻转不复原，且落盘 PNG 也是翻转后的左蓝右红
+                int histBefore = win.HistoryItemsForTest.Count;
+                SendImeKey(mainHwnd, 0x29); // ScanTilde -> 保存并退出截图模式
+                Pump(100);
+                Check(!win.IsShotActive, "再按 ~ 完成保存并退回播放态");
+                Check(win.IsVideoMirrored && win.PlayerControl.IsHorizontalMirrored, "保存截图后保持水平翻转不自动复原");
+                Check(win.HistoryItemsForTest.Count == histBefore + 1, "镜像截图成功计入历史队列");
+                if (win.HistoryItemsForTest.Count > 0)
+                {
+                    var savedItem = win.HistoryItemsForTest[0];
+                    savedItem.Sync.WaitCompleted(3000);
+                    Check(File.Exists(savedItem.FilePath), "镜像截图文件已落盘");
+                    if (File.Exists(savedItem.FilePath))
+                    {
+                        using (var fs = new FileStream(savedItem.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        {
+                            var dec = new PngBitmapDecoder(fs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                            Check(dec.Frames.Count > 0 && IsLeftBlueRightRed(dec.Frames[0]), "落盘截图 PNG 像素方向精确保持水平镜像");
+                        }
+                    }
+                }
+
+                // 4) 进入 ~ 模式后按 Esc 取消退出：同样保持翻转不复原
+                SendImeKey(mainHwnd, 0x29);
+                Pump(100);
+                Check(win.IsShotActive, "二次进入 ~ 截图模式");
+                PostKey(mainHwnd, VK_ESCAPE, 0x01);
+                Pump(80);
+                Check(!win.IsShotActive && win.IsVideoMirrored, "按 Esc 退出 ~ 模式后仍保持水平翻转");
+
+                // 5) 切换文件后自动重置水平翻转
+                win.LoadVideo(fileB);
+                Pump(120);
+                Check(!win.IsVideoMirrored && !win.PlayerControl.IsHorizontalMirrored, "切换文件后自动重置水平翻转");
+
+                // 6) 验证恢复播放前 CancelForPlay 立即清空导航状态
+                win.NavControl.CancelForPlay();
+                Check(!win.NavControl.Busy, "CancelForPlay 清空在途导航队列成功");
+            }
+            finally
+            {
+                win.TempSaveFolderOverride = null;
+                try { if (Directory.Exists(tmpDir)) Directory.Delete(tmpDir, true); } catch { }
             }
         }
 

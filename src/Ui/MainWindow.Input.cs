@@ -544,8 +544,7 @@ namespace ScreenboxLite.Ui
             }
             if (isTab)
             {
-                if (!_shotActive) return false;
-                if (!repeat && Debounce(ref _lastTabTick, 60)) ToggleShotHorizontalFlip();
+                if (!repeat && Debounce(ref _lastTabTick, 60)) ToggleHorizontalMirror();
                 MarkRawHandled(VK_TAB);
                 return true;
             }
@@ -721,14 +720,15 @@ namespace ScreenboxLite.Ui
             if (forward && !_fastForwarding && _player.HasVideo)
             {
                 _fastForwarding = true;
+                _nav.CancelForPlay();
                 _player.SetPause(false);
                 _player.SetSpeed(FastSeekRate);
             }
             else if (!forward && _fastForwarding)
             {
                 _fastForwarding = false;
-                _player.SetPause(true);
                 _player.SetSpeed(_speedCombo.SelectedIndex >= 0 ? Speeds[_speedCombo.SelectedIndex] : 1.0);
+                _player.SetPause(true);
             }
 
             // 快退：按渲染节拍推进目标时间，由导航器合并为“同时最多一个”的精确 seek
